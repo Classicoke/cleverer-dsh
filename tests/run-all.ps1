@@ -1,5 +1,5 @@
 <#
-  run-all.ps1 — 运行全部单测（96 项）
+  run-all.ps1 — 运行全部单测（426 项，v1.2）
   用法：pwsh -File tests/run-all.ps1
 #>
 $ErrorActionPreference = 'Stop'
