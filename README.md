@@ -13,7 +13,25 @@
 | 📦 **一键安装**：`install.ps1` 幂等安装（自动备份/合并 patch/生成子板），**卸载一条命令还原** | **One-command install**: idempotent `install.ps1` (auto backup / patch merge / board generation), one-command uninstall |
 | 🧪 **426 项单元测试全绿**，覆盖率 99.7%+；纯 ESM、**零依赖**，不碰 DSH 源码 | **426 unit tests green**, 99.7%+ coverage; pure ESM, **zero dependencies**, never touches DSH source |
 | 📚 **7 个自研 skill**：错误协议 L0/L1、查文件方法论、报告交付协议，按需自动加载 | **7 handcrafted skills**: error protocol L0/L1, file-lookup methodology, report delivery — auto-loaded on demand |
-| 🔒 **发布零个人信息**：内置审计脚本扫描真名/邮箱/路径/ID，防泄露上 GitHub | **Zero-PII release**: built-in audit scans for real names / emails / paths / IDs before you push |
+| ⚡ **实测净收益**：同任务对比裸 DSH，耗时 -33%、估算 token -44%（小样本，未大规模测试）| **Measured gains**: same task vs bare DSH — 33% less time, 44% fewer estimated tokens (small sample, not yet broadly tested) |
+
+---
+
+## 案例分析 / Case study
+
+同一真实任务（桌面应用打包的日志分析），v1.2 插件套件 vs **裸 DSH 实例**（隔离 DSH_HOME，无插件、无 skill）对比。*The same real task (desktop-app packaging log analysis), v1.2 plugin suite vs a **bare DSH instance** (isolated DSH_HOME, no plugins, no skills).*
+
+| 指标 / Metric | v1.2 | 裸 / bare | 差异 / diff |
+|---|---|---|---|
+| **总耗时 / total time** | 514.5s (8.58min) | 765.2s (12.75min) | **-33%** |
+| LLM 调用 / LLM calls | 51 | 61 | -20% |
+| 工具调用 / tool calls | 59 | 67 | -14% |
+| **估算总 token / est. total tokens** | ~40,980 | ~73,211 | **-44%** |
+| 其中推理块 / reasoning chunks | 401 | 1,163 | -65% |
+
+**过程质量差异 / process quality**：v1.2 无死磕、有脚本化、卡点征求用户；裸实例 13 次内联试错未沉淀、未征求卡点决策。*v1.2: no stuck loops, scripted approaches, checkpoint consultation; bare: 13 inline retries, no checkpoint consultation.*
+
+> ⚠️ **声明 / disclaimer**：样本量各 1 次（n=1），token 为日志字符估算口径（±20%），**未大规模测试**——收益方向有证据，数值待更多样本与 API 后台真实用量校准。*n=1 per group; tokens are character-estimated (±20%); NOT broadly tested — direction is evidenced, magnitudes await more samples and real API usage data.*
 
 ---
 
@@ -197,14 +215,6 @@ node test-skill-loader.mjs      # 42 项：清单注入/点名/限流/清理
 ## 许可证 / License
 
 MIT © 2026 cleverer-dsh contributors
-
-## 发布前检查 / Pre-publish checklist（铁律 / hard rules）
-
-推送 GitHub 前必须 / before pushing to GitHub:
-
-1. `pwsh -File scripts/publish-audit.ps1` —— 审计**全绿**才允许（扫描个人信息：真名/拼音邮箱/本机路径/ID/单位/地点）/ audit **must be all green** (scans for real names / emails / local paths / IDs / employer / location)
-2. 确认 git 身份为匿名（`cleverer-dsh@users.noreply.github.com`）/ confirm anonymous git identity
-3. 确认版本 tag（正式 `v1.2`）/ confirm the release tag (v1.2)
 
 ---
 
