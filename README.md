@@ -82,7 +82,7 @@ Paste this into PowerShell (auto-downloads the release zip → extracts → inst
 
 ```powershell
 # Download and install in one go (PowerShell 7+)
-$u = 'https://github.com/gaolinleo2662/cleverer-dsh/archive/refs/tags/v1.2.zip'
+$u = 'https://github.com/Classicoke/cleverer-dsh/archive/refs/tags/v1.2.zip'
 $z = "$env:TEMP\cleverer-dsh.zip"; $d = "$env:TEMP\cleverer-dsh-install"
 Invoke-WebRequest $u -OutFile $z
 Expand-Archive $z $d -Force
@@ -94,7 +94,7 @@ Remove-Item $z, $d -Recurse -Force
 
 ```powershell
 # 1. Clone
-git clone https://github.com/gaolinleo2662/cleverer-dsh
+git clone https://github.com/Classicoke/cleverer-dsh
 cd cleverer-dsh
 
 # 2. Install (auto: backup existing config → copy plugins/skills/scripts → generate config files → merge; never duplicates)
