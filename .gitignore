@@ -1,0 +1,34 @@
+# 环境 / 依赖
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+
+# 发布审计个人特征库（绝不入库）
+scripts/audit-signatures.local.ps1
+
+# 内部交接文档（不含发布）
+HANDOFF.md
+
+# DSH 用户数据（绝不入库）
+*.bak-*
+backup-*/
+skills-cleaned-*/
+.dsh/
+sessions/
+
+# 临时 / 日志
+*.log
+*.tmp
+temp/
+.diag/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 本地覆盖（用户自己的 DSH checkout 路径等）
+.env
+.env.local

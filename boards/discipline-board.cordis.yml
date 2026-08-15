@@ -1,0 +1,59 @@
+# discipline-board.cordis.yml — 纪律插件子板（插排 Step 2，M2-4）
+# 说明：cordis:include 子板，主体 cordis.patch.yml 通过 include 挂本文件。
+# hub（discipline-hub）保持在主 patch 顶层最前——它必须最先建立 __errLog/
+# __reminder/__hubStats 协作设施，其他纪律插件依赖这些设施。
+# 注意：同一插件禁止双加载（主 patch 里不再单独挂这些 id）。
+
+# ── 拦截组 ─────────────────────────────────────────────────────────────
+- id: anti-stuck
+  name: 'file:///{{DSH_HOME}}/plugins/anti-stuck.mjs'
+  config:
+    maxSameFingerprintFails: 2
+    maxFailsBeforeReflect: 3
+    maxFailsBeforeSteer: 5
+
+# ── 溯源组（方案级，O3 职责分层） ─────────────────────────────────────
+- id: dsh-env-triage
+  name: 'file:///{{DSH_HOME}}/plugins/dsh-env-triage.mjs'
+  config:
+    minFailsForTrace: 2
+    maxSchemesBeforeReport: 3
+
+# ── 规划组 ─────────────────────────────────────────────────────────────
+- id: dsh-plan-discipline
+  name: 'file:///{{DSH_HOME}}/plugins/dsh-plan-discipline.mjs'
+  config:
+    enabled: true
+    maxRemindersPerTurn: 2
+    failDensityTodoRefresh: 3
+
+# ── 记忆组 ─────────────────────────────────────────────────────────────
+- id: dsh-memory
+  name: 'file:///{{DSH_HOME}}/plugins/dsh-memory.mjs'
+  config:
+    enabled: true
+
+# ── 沉淀组 ─────────────────────────────────────────────────────────────
+- id: skill-evolver
+  name: 'file:///{{DSH_HOME}}/plugins/skill-evolver.mjs'
+  config:
+    enabled: true
+
+# ── 纪律段（system prompt 注入） ───────────────────────────────────────
+- id: dsh-discipline
+  name: 'file:///{{DSH_HOME}}/plugins/dsh-discipline.mjs'
+  config:
+    enabled: true
+
+# ── skill 加载促进 ─────────────────────────────────────────────────────
+- id: dsh-skill-loader
+  name: 'file:///{{DSH_HOME}}/plugins/dsh-skill-loader.mjs'
+  config:
+    enabled: true
+
+# ── cordis 动态插件纪律（保留现状，P1-6 确认） ─────────────────────────
+- id: dsh-cordis-discipline
+  name: 'file:///{{DSH_HOME}}/plugins/dsh-cordis-discipline.mjs'
+  config:
+    enabled: true
+

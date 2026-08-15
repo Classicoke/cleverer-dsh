@@ -1,0 +1,27 @@
+# tools-board.cordis.yml — 功能层插件子板（2026-08-16 交接，方案定稿）
+# 说明：功能层 vs 纪律层分离（边界原则）——纪律插件收 discipline-board，
+# 功能工具收本子板，不混排、不平铺（避免将来二次迁移）。
+# 主体 cordis.patch.yml 通过 cordis:include 挂载本文件（hub 之后、官方包之前）。
+# 注意：同一插件禁止双加载（主 patch 里不再单独挂这些 id）。
+
+# ── 定位组 ─────────────────────────────────────────────────────────────
+# fast_locate: 一次调用多根目录并行扫描（跳过 node_modules/.git/dist），
+# 替代 DSH 串行 Grep→Pwsh→HELLO 三步走（"查东西慢"根因：串行 + 无环境先验）
+- id: dsh-fast-locate
+  name: 'file:///{{DSH_HOME}}/plugins/dsh-fast-locate.mjs'
+  config:
+    maxDepth: 5
+    limit: 50
+
+# ── 诊断组 ─────────────────────────────────────────────────────────────
+# env_check: 把 dsh-env-check.mjs（CLI 检查项注册表）注册成工具——
+# agent 工具清单直接可调，不再"记得去跑脚本"；与 env-triage 溯源卡闭环
+# （提醒"先跑诊断" → 直接调 env_check）。逻辑不重写，单一事实源在脚本。
+- id: dsh-env-check-tool
+  name: 'file:///{{DSH_HOME}}/plugins/dsh-env-check-tool.mjs'
+  config:
+    # 脚本位置：install.ps1 会把 scripts/dsh-env-check.mjs 复制到 <DSH_HOME>/scripts/
+    # （纯路径非 file://——execFile 需要文件系统路径）
+    scriptPath: '{{DSH_HOME}}/scripts/dsh-env-check.mjs'
+    timeoutMs: 60000
+
