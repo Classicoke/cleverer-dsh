@@ -19,6 +19,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { makeCleanupTimer } from './_shared.mjs'
 
 export const name = 'dsh-cordis-discipline'
 export const inject = ['systemPrompt']
@@ -175,13 +176,9 @@ export function apply(ctx, config = {}) {
   })
 
   // 状态清理
-  ctx.effect(() => {
-    const timer = setInterval(() => {
-      const cutoff = Date.now() - 30 * 60 * 1000
-      for (const [agentId, s] of state) {
-        if (s.running.size === 0 && s.defined.size === 0) state.delete(agentId)
-      }
-    }, 10 * 60 * 1000)
-    return () => clearInterval(timer)
-  }, 'dsh-cordis-discipline: state cleanup')
+  ctx.effect(() => makeCleanupTimer((cutoff) => {
+    for (const [agentId, s] of state) {
+      if (s.running.size === 0 && s.defined.size === 0) state.delete(agentId)
+    }
+  }), 'dsh-cordis-discipline: state cleanup')
 }

@@ -20,6 +20,7 @@
  * 零依赖纯 ESM。挂载：cordis.patch.yml 的 insert 列表（在 discipline-hub 之后）。
  */
 import { randomUUID } from 'node:crypto'
+import { isFailure, extractText, classifyError, similarity, currentTurn, makeCleanupTimer } from './_shared.mjs'
 
 export const name = 'dsh-env-triage'
 
@@ -36,21 +37,6 @@ const DEFAULT_CONFIG = {
   maxRemindersPerTurn: 2,
   /** 方案判定：指纹差异 ≥ 此值视为"不同方案"（bigram Jaccard） */
   schemeDistinctThreshold: 0.4,
-}
-
-/** 字符 bigram 集合（方案相似度用） */
-function bigrams(s) {
-  const set = new Set()
-  const t = String(s).toLowerCase().replace(/[\s\p{P}\p{S}]/gu, '')
-  for (let i = 0; i < t.length - 1; i++) set.add(t.slice(i, i + 2))
-  return set
-}
-function sim(a, b) {
-  const A = bigrams(a), B = bigrams(b)
-  if (A.size === 0 || B.size === 0) return 0
-  let inter = 0
-  for (const x of A) if (B.has(x)) inter++
-  return inter / (A.size + B.size - inter)
 }
 
 export function apply(ctx, config = {}) {
@@ -70,36 +56,19 @@ export function apply(ctx, config = {}) {
   ctx.on('tools/result', (exec, result) => {
     if (!exec?.agent) return
     // 非失败直接忽略（成功会重置 turn 内失败？不——连续失败窗口只往前看）
-    const isFail = result?.isError === true
-      || /(\[exit code: [1-9]|error|exception|traceback|command failed|failed:|exit code: [1-9])/.test(JSON.stringify(result?.content || result || '').toLowerCase())
+    const isFail = isFailure(result)
     if (!isFail) return
 
     const agentId = exec.agent.id
     const s = stateFor(agentId)
-    const turn = exec.agent.session?.events
-      ? [...exec.agent.session.events].findLast(e => e.type === 'turn/start')?.data?.turn ?? 0
-      : 0
+    const turn = currentTurn(exec.agent)
     if (s.turn !== turn) { s.turn = turn; s.fails = [] }
 
     // 从 hub __errLog 拿分类（若 hub 存在）；独立分类器兜底
     let cls = 'generic'
-    let text = ''
-    try {
-      const content = result?.content
-      if (Array.isArray(content)) text = content.map(b => b?.text || '').join(' ').slice(0, 150)
-    } catch { /* ignore */ }
+    const text = extractText(result, 150)
     // 独立分类（与 hub classify 同规则，避免依赖 errLog 时序/字段完整性）
-    const RE_CLASSES = [
-      ['stale-snapshot', /old_string was not found/i],
-      ['missing-module', /(cannot resolve|Cannot find module|module not found|ERR_MODULE_NOT_FOUND|ERR_DLOPEN)/i],
-      ['order-dep', /(not found|ENOENT|no such file|module cannot be found)/i],
-      ['permission', /(permission denied|EACCES|EPERM|denied)/i],
-      ['network', /(ECONNREFUSED|ETIMEDOUT|ENOTFOUND|network|fetch failed|socket)/i],
-      ['syntax', /(SyntaxError|Unexpected token|Parse error)/i],
-    ]
-    for (const [c, re] of RE_CLASSES) {
-      if (re.test(text)) { cls = c; break }
-    }
+    cls = classifyError(text)
     // errLog 反查补充（仅当独立分类未命中且 hub 存在）
     if (cls === 'generic' && Array.isArray(ctx.__errLog)) {
       const last = [...ctx.__errLog].reverse().find(r => r.errorClass && r.text && text && r.text.includes(text.slice(0, 30)))
@@ -123,7 +92,7 @@ export function apply(ctx, config = {}) {
     const fps = [...new Set(s.fails.map(f => f.fp))]
     let schemes = 1
     for (let i = 1; i < fps.length; i++) {
-      if (Math.max(...fps.slice(0, i).map(f => sim(f, fps[i]))) < cfg.schemeDistinctThreshold) schemes++
+      if (Math.max(...fps.slice(0, i).map(f => similarity(f, fps[i]))) < cfg.schemeDistinctThreshold) schemes++
     }
     const warned = s.warned
     const reminders = []
@@ -194,13 +163,9 @@ export function apply(ctx, config = {}) {
   })
 
   // ── 清理 ─────────────────────────────────────────────────────────────
-  ctx.effect(() => {
-    const timer = setInterval(() => {
-      const cutoff = Date.now() - 30 * 60 * 1000
-      for (const [agentId, s] of state) {
-        if (s.fails.length === 0 || s.fails[s.fails.length - 1].ts < cutoff) state.delete(agentId)
-      }
-    }, 10 * 60 * 1000)
-    return () => clearInterval(timer)
-  }, 'dsh-env-triage: state cleanup')
+  ctx.effect(() => makeCleanupTimer((cutoff) => {
+    for (const [agentId, s] of state) {
+      if (s.fails.length === 0 || s.fails[s.fails.length - 1].ts < cutoff) state.delete(agentId)
+    }
+  }), 'dsh-env-triage: state cleanup')
 }

@@ -68,13 +68,6 @@ function renderEntries(entries) {
   return entries.join(SEP)
 }
 
-function parseMeta(text) {
-  // 支持开头 # 标题（人类可读），条目以 § 分隔
-  const lines = text.split('\n')
-  const title = lines.find(l => l.startsWith('# '))?.slice(2) || ''
-  return { title, entries: parseEntries(text) }
-}
-
 /** 读取记忆文件；不存在 → 空；损坏 → null（调用方决定备份拒绝） */
 async function loadStore(dir, file) {
   const p = path.join(dir, file)
@@ -156,10 +149,6 @@ function makeStore(cfg, dir) {
     }
     cache.set(kind, loaded)
     return loaded
-  }
-
-  async function get(kind) {
-    return ensureLoaded(kind)
   }
 
   async function list(kind) {
@@ -261,7 +250,7 @@ function makeStore(cfg, dir) {
     return { ok: true, reason: 'removed', message: `已删除第 ${index} 条，剩 ${entries.length} 条` }
   }
 
-  return { files, cache, get, list, add, replace, remove, dir }
+  return { files, cache, list, add, replace, remove, dir }
 }
 
 // ── 快照渲染（对齐 Hermes 的注入格式）────────────────────────────────────

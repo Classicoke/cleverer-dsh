@@ -22,6 +22,7 @@
  *     name: 'file:///.../discipline-hub.mjs'
  */
 import { randomUUID } from 'node:crypto'
+import { extractText, isFailure, classifyError, fingerprint, currentTurn, makeCleanupTimer } from './_shared.mjs'
 
 export const name = 'discipline-hub'
 
@@ -54,65 +55,6 @@ const DEFAULT_CONFIG = {
   ],
 }
 
-/** 提取工具结果纯文本（与 anti-stuck 同源逻辑，避免 JSON 转义坑） */
-function extractText(result) {
-  try {
-    const c = result?.content
-    if (Array.isArray(c)) {
-      const joined = c.map(b => (b && typeof b === 'object' && typeof b.text === 'string') ? b.text : '').join(' ')
-      if (joined) return joined.slice(0, 300)
-    }
-  } catch { /* ignore */ }
-  return JSON.stringify(result || '').slice(0, 300)
-}
-
-/** 判定是否失败 */
-function isFailure(result) {
-  if (!result) return false
-  if (result.isError === true) return true
-  try {
-    const v = result.value
-    if (v && typeof v === 'object') {
-      const code = v.exitCode
-      if (typeof code === 'number' && code !== 0) return true
-    }
-  } catch { /* ignore */ }
-  const txt = JSON.stringify(result.content || result || '').toLowerCase()
-  return /(\[exit code: [1-9]|error|exception|traceback|command failed|failed:|exit code: [1-9])/.test(txt)
-}
-
-/** 错误分类：按关键词表匹配，返回 cls */
-function classify(txt, cfg) {
-  if (!txt) return 'unknown'
-  for (const { cls, re } of cfg.errorClasses) {
-    if (re.test(txt)) return cls
-  }
-  return 'generic'
-}
-
-/** 指纹（精简版，供 __errLog 记录） */
-function fingerprint(exec) {
-  const name = exec.name || '?'
-  const args = exec.arguments || {}
-  let sig = ''
-  try {
-    if (typeof args.command === 'string') {
-      sig = args.command
-        .replace(/^cd\s+[^;]+;\s*/, '')
-        .replace(/\$env:[A-Z_]+(\s*=\s*'[^']*'|\s*=\s*"[^"]*")?;\s*/g, '')
-        .replace(/\s*2>&1\s*/g, ' ')
-        .replace(/\s*\*\s*>\s*[^;]+/g, ' ')
-        .replace(/\s*\|\s*Select-(Object|String)[^|]*/g, '')
-        .replace(/\s+/g, ' ').trim().slice(0, 200)
-    } else if (typeof args.file_path === 'string' || typeof args.path === 'string') {
-      sig = args.file_path || args.path || ''
-    } else {
-      sig = JSON.stringify(args).slice(0, 200)
-    }
-  } catch { sig = String(args).slice(0, 200) }
-  return `${name}::${sig}`
-}
-
 export function apply(ctx, config = {}) {
   const cfg = { ...DEFAULT_CONFIG, ...config }
   ctx.logger?.info?.('discipline-hub: loaded (errLog aggregation + reminder arbitration)')
@@ -126,15 +68,13 @@ export function apply(ctx, config = {}) {
   ctx.on('tools/result', (exec, result) => {
     if (!exec?.agent) return
     const txt = extractText(result)
-    const turn = exec.agent.session?.events
-      ? [...exec.agent.session.events].findLast(e => e.type === 'turn/start')?.data?.turn ?? 0
-      : 0
+    const turn = currentTurn(exec.agent)
     const rec = {
       at: Date.now(),
       turn,
       tool: exec.name,
       fp: fingerprint(exec),
-      errorClass: isFailure(result) ? classify(txt, cfg) : 'success',
+      errorClass: isFailure(result) ? classifyError(txt, cfg.errorClasses) : 'success',
       isFailure: isFailure(result),
       text: txt.slice(0, 200),
     }
@@ -158,7 +98,8 @@ export function apply(ctx, config = {}) {
       return turnStats.get(agentId)?.fails ?? 0
     },
     errLog() { return ctx.__errLog },
-    classify,
+    // 兼容两种调用形态：classify(txt, {errorClasses}) 或 classify(txt, classes)
+    classify: (txt, cfgLike) => classifyError(txt, cfgLike?.errorClasses || cfgLike),
   }
 
   // ── O2: 提醒仲裁 ─────────────────────────────────────────────────────
@@ -199,16 +140,12 @@ export function apply(ctx, config = {}) {
   })
 
   // ── 清理 ─────────────────────────────────────────────────────────────
-  ctx.effect(() => {
-    const timer = setInterval(() => {
-      const cutoff = Date.now() - 30 * 60 * 1000
-      for (const [agentId, st] of turnStats) {
-        if (st.fails === 0) turnStats.delete(agentId)
-      }
-      for (const [agentId, q] of reminderQueues) {
-        if (q.every(r => r.ts < cutoff)) reminderQueues.delete(agentId)
-      }
-    }, 10 * 60 * 1000)
-    return () => clearInterval(timer)
-  }, 'discipline-hub: state cleanup')
+  ctx.effect(() => makeCleanupTimer((cutoff) => {
+    for (const [agentId, st] of turnStats) {
+      if (st.fails === 0) turnStats.delete(agentId)
+    }
+    for (const [agentId, q] of reminderQueues) {
+      if (q.every(r => r.ts < cutoff)) reminderQueues.delete(agentId)
+    }
+  }), 'discipline-hub: state cleanup')
 }

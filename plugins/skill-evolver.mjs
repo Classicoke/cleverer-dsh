@@ -19,6 +19,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readdir, readFile, writeFile, appendFile } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
+import { fingerprint, isFailure, extractText, similarity, makeCleanupTimer } from './_shared.mjs'
 
 export const name = 'skill-evolver'
 
@@ -45,77 +46,13 @@ function resolveSkillsDir(cfg) {
   return path.join(home, 'skills')
 }
 
-// ── 指纹：识别"同一操作" ──────────────────────────────────────────────
-function fingerprint(exec) {
-  const name = exec.name || '?'
-  const args = exec.arguments || {}
-  let sig = ''
-  try {
-    if (typeof args.command === 'string') {
-      sig = args.command
-        .replace(/^cd\s+[^;]+;\s*/, '')
-        .replace(/\s*2>&1\s*(\|\s*Select[^|]*)?$/, '')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 300)
-    } else if (typeof args.file_path === 'string' || typeof args.path === 'string') {
-      sig = args.file_path || args.path || ''
-    } else {
-      sig = JSON.stringify(args).slice(0, 300)
-    }
-  } catch {
-    sig = String(args).slice(0, 300)
-  }
-  return `${name}::${sig}`
-}
-
-/** 判断工具结果是否失败（覆盖 pwsh/bash 的 value.exitCode 与渲染标记） */
-function isFailure(result) {
-  if (!result) return false
-  if (result.isError === true) return true
-  try {
-    const v = result.value
-    if (v && typeof v === 'object') {
-      const code = v.exitCode
-      if (typeof code === 'number' && code !== 0) return true
-    }
-  } catch { /* ignore */ }
-  const txt = JSON.stringify(result.content || result || '').toLowerCase()
-  return /(\[exit code: [1-9]|error|exception|traceback|command failed|failed:|exit code: [1-9])/.test(txt)
-}
-
-/** 取结果文本（失败原因用） */
-function resultText(result) {
-  try {
-    const c = result?.content
-    if (Array.isArray(c)) {
-      return c.map(b => (b && typeof b === 'object' && b.text) || '').join(' ').slice(0, 300)
-    }
-  } catch { /* ignore */ }
-  return JSON.stringify(result || '').slice(0, 300)
-}
+// ── 指纹/失败判定/文本提取/相似度：来自 _shared.mjs ──────────────────────
 
 /** 从命令文本提取短标题（供技能名/场景标题） */
 function shortTitle(fp) {
   const [tool, ...rest] = fp.split('::')
   const cmd = (rest.join('::') || tool).slice(0, 120)
   return `${tool}: ${cmd}`
-}
-
-// ── 相似度：字符 bigram Jaccard ────────────────────────────────────────
-function charBigrams(s) {
-  const set = new Set()
-  const t = String(s).toLowerCase().replace(/[\s\p{P}\p{S}]/gu, '')
-  for (let i = 0; i < t.length - 1; i++) set.add(t.slice(i, i + 2))
-  return set
-}
-function similarity(a, b) {
-  const A = charBigrams(a)
-  const B = charBigrams(b)
-  if (A.size === 0 || B.size === 0) return 0
-  let inter = 0
-  for (const x of A) if (B.has(x)) inter++
-  return inter / (A.size + B.size - inter)
 }
 
 // ── 技能名：kebab-case（skill-filesystem 硬性要求） ─────────────────────
@@ -342,7 +279,7 @@ export function apply(ctx, config = {}) {
     if (isFailure(result)) {
       const rec = t.get(fp) || { fails: 0, lastError: '', solvedAt: 0, solution: '' }
       rec.fails += 1
-      rec.lastError = resultText(result) || rec.lastError
+      rec.lastError = extractText(result) || rec.lastError
       t.set(fp, rec)
     } else {
       // 成功：收割"尚未解决"的失败指纹——解法 = 当前成功的命令
@@ -411,14 +348,10 @@ export function apply(ctx, config = {}) {
   })
 
   // 3. 状态清理
-  ctx.effect(() => {
-    const timer = setInterval(() => {
-      const cutoff = Date.now() - 30 * 60 * 1000
-      for (const [agentId, m] of track) {
-        const last = Math.max(...[...m.values()].map(v => v.solvedAt || v.fails ? Date.now() : 0), 0)
-        if (last < cutoff) track.delete(agentId)
-      }
-    }, 10 * 60 * 1000)
-    return () => clearInterval(timer)
-  }, 'skill-evolver: state cleanup')
+  ctx.effect(() => makeCleanupTimer((cutoff) => {
+    for (const [agentId, m] of track) {
+      const last = Math.max(...[...m.values()].map(v => v.solvedAt || v.fails ? Date.now() : 0), 0)
+      if (last < cutoff) track.delete(agentId)
+    }
+  }), 'skill-evolver: state cleanup')
 }

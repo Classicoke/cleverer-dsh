@@ -16,10 +16,22 @@
  */
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import os from 'node:os'
 
 const DSH_HOME = process.env.DSH_HOME || join(os.homedir(), '.dsh')
+
+// ── YAML 装配解析 helper（dep-consistency / board-consistency 共用）──────
+/** 从 YAML 提取 file:/// 本地插件引用（转 Windows 反斜杠路径） */
+function extractFileRefs(text) {
+  return [...text.matchAll(/name:\s*'file:\/\/\/([^']+)'/g)].map(m => m[1].replace(/\//g, '\\'))
+}
+
+/** 从 YAML 提取 - id: 列表 */
+function extractIds(text) {
+  return [...text.matchAll(/^\s*- id:\s*([\w-]+)/gm)].map(m => m[1])
+}
+
 // REPO 优先环境变量，其次探测常见位置（发布版不硬编码本机路径）
 function resolveRepo() {
   if (process.env.DSH_REPO) return process.env.DSH_REPO
@@ -44,7 +56,7 @@ const CHECKS = {
       const patch = join(DSH_HOME, 'cordis.patch.yml')
       if (!existsSync(patch)) return { ok: false, evidence: `cordis.patch.yml 不存在: ${patch}` }
       const text = readFileSync(patch, 'utf8')
-      const refs = [...text.matchAll(/name:\s*'file:\/\/\/([^']+)'/g)].map(m => m[1].replace(/\//g, '\\'))
+      const refs = extractFileRefs(text)
       const missing = refs.filter(r => !existsSync(r))
       return {
         ok: missing.length === 0,
@@ -205,25 +217,21 @@ const CHECKS = {
       const issues = []
       for (const [label, f] of [['patch', patchFile], ...boardFiles.map(f => [f.split('\\').pop(), f])]) {
         if (!existsSync(f)) { issues.push(`${label} 文件不存在`); continue }
-        const text = readFileSync(f, 'utf8')
         // 检查引用的本地插件文件存在
-        for (const m of text.matchAll(/name:\s*'file:\/\/\/([^']+)'/g)) {
-          const p = m[1].replace(/\//g, '\\')
+        for (const p of extractFileRefs(readFileSync(f, 'utf8'))) {
           if (!existsSync(p)) issues.push(`${label} 引用缺失: ${p}`)
         }
       }
       // 双加载检查（主 patch insert ∩ 各子板 = 空；子板之间也互查）
-      const patchText = readFileSync(patchFile, 'utf8')
-      const patchIds = new Set([...patchText.matchAll(/^\s*- id:\s*([\w-]+)/gm)].map(m => m[1]))
+      const patchIds = new Set(extractIds(readFileSync(patchFile, 'utf8')))
       for (const f of boardFiles) {
-        const boardText = readFileSync(f, 'utf8')
-        const boardIds = [...boardText.matchAll(/^\s*- id:\s*([\w-]+)/gm)].map(m => m[1])
+        const boardIds = extractIds(readFileSync(f, 'utf8'))
         const dup = boardIds.filter(id => patchIds.has(id))
         if (dup.length > 0) issues.push(`${f.split('\\').pop()} 与主 patch 双加载: ${dup.join(', ')}`)
         // 子板间互查
         for (const f2 of boardFiles) {
           if (f2 === f) continue
-          const ids2 = [...readFileSync(f2, 'utf8').matchAll(/^\s*- id:\s*([\w-]+)/gm)].map(m => m[1])
+          const ids2 = extractIds(readFileSync(f2, 'utf8'))
           const crossDup = boardIds.filter(id => ids2.includes(id))
           if (crossDup.length > 0) issues.push(`子板 ${f.split('\\').pop()} 与 ${f2.split('\\').pop()} 重复: ${crossDup.join(', ')}`)
         }

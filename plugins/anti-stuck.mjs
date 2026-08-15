@@ -14,6 +14,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { fingerprint, isFailure, extractText, currentTurn, makeCleanupTimer } from './_shared.mjs'
 
 export const name = 'anti-stuck'
 
@@ -47,93 +48,7 @@ const DEFAULT_CONFIG = {
 }
 
 /**
- * 计算一次工具调用的"指纹"——归一化后的身份，用于识别"完全相同的重试"。
- * pwsh/bash 命令去掉 cd 前缀、管道尾部装饰；edit/write 用文件路径 + 内容摘要。
- * P0-3 加强模糊化：去 env 前缀 / Select-Object 行数 / 重定向 / 2>&1 / Select-String 过滤器，
- * 让"同一命令微调装饰层"也落入同一指纹（本次 28→6 覆盖率过低的根因）。
- */
-function fingerprint(exec) {
-  const name = exec.name || '?'
-  const args = exec.arguments || {}
-  let sig = ''
-  try {
-    if (typeof args.command === 'string') {
-      // shell 类工具：归一化命令（加强模糊化）
-      sig = args.command
-        .replace(/^cd\s+[^;]+;\s*/, '')                    // 去 cd 前缀
-        .replace(/\$env:[A-Z_]+(\s*=\s*'[^']*'|\s*=\s*"[^"]*")?;\s*/g, '') // 去 env 设置
-        .replace(/\s*2>&1\s*/g, ' ')                        // 去 2>&1
-        .replace(/\s*\*\s*>\s*[^;]+/g, ' ')                 // 去 *> 重定向到文件
-        .replace(/\s*\|\s*Select-Object\s+-Last\s+\d+/g, '') // 去 | Select-Object -Last N
-        .replace(/\s*\|\s*Select-Object\s+-First\s+\d+/g, '') // 去 | Select-Object -First N
-        .replace(/\s*\|\s*Select-String\s+[^|]*$/g, '')     // 去尾部 | Select-String ...
-        .replace(/\s*\|\s*Select-Object\s+[^|]*$/g, '')     // 去尾部 | Select-Object ...
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 300)
-    } else if (typeof args.file_path === 'string' || typeof args.path === 'string') {
-      // fs 类工具：文件路径 + 关键参数摘要
-      const fp = args.file_path || args.path || ''
-      if (name === 'edit') {
-        const oldStr = String(args.old_string || '').slice(0, 80)
-        sig = `${fp}::${oldStr}`
-      } else {
-        sig = fp
-      }
-    } else {
-      sig = JSON.stringify(args).slice(0, 300)
-    }
-  } catch {
-    sig = String(args).slice(0, 300)
-  }
-  return `${name}::${sig}`
-}
-
-/** 判断一次工具结果是否算"失败"（用于死磕统计） */
-function isFailure(result) {
-  if (!result) return false
-  if (result.isError === true) return true
-  // 兜底 1: canonical value 里的 exitCode（pwsh/bash 工具的 value 形状）
-  try {
-    const v = result.value
-    if (v && typeof v === 'object') {
-      const code = v.exitCode
-      if (typeof code === 'number' && code !== 0) return true
-    }
-  } catch { /* ignore */ }
-  // 兜底 2: 渲染文本里的失败标记（[exit code: N]、error、failed 等）
-  const txt = JSON.stringify(result.content || result || '').toLowerCase()
-  return /(\[exit code: [1-9]|error|exception|traceback|command failed|failed:|exit code: [1-9])/.test(txt)
-}
-
-/** 归一化的文本内容（用于失败原因提取）
- *  P0-3 fix：必须提取纯文本而非 JSON.stringify——JSON 转义会把反斜杠变
- *  `\\`（双反斜杠），导致路径归一化后 `resources//app.asar` 匹配失败。 */
-function failureText(result) {
-  try {
-    const c = result?.content
-    if (Array.isArray(c)) {
-      const texts = c.map(b => (b && typeof b === 'object' && typeof b.text === 'string') ? b.text : '')
-      const joined = texts.join(' ')
-      if (joined) return joined.slice(0, 400)
-    }
-  } catch { /* ignore */ }
-  return JSON.stringify(result || '').slice(0, 400)
-}
-
-/** 从 agent 的 session 事件流推断当前 turn 号（无则 0） */
-function currentTurn(agent) {
-  try {
-    const events = agent?.session?.events
-    if (!events) return 0
-    const last = [...events].findLast(e => e.type === 'turn/start')
-    return last && last.type === 'turn/start' ? last.data.turn : 0
-  } catch {
-    return 0
-  }
-}
-
-/** 某 agent 当前 turn 内的失败总数（按失败记录归属的 turn 聚合） */
+ * 某 agent 当前 turn 内的失败总数（按失败记录归属的 turn 聚合） */
 function turnFailsOf(failState, agentId, turn) {
   const s = failState.get(agentId)
   if (!s) return 0
@@ -217,7 +132,7 @@ export function apply(ctx, config = {}) {
     const s = stateFor(agentId)
 
     if (isFailure(result)) {
-      const txt = failureText(result)
+      const txt = extractText(result, 400) // 400 上限：保留失败详情供诊断
       // 忽略自己 deny 产生的失败
       if (txt.includes(DENY_PREFIX)) return
       const turn = currentTurn(exec.agent)
@@ -400,26 +315,21 @@ export function apply(ctx, config = {}) {
   })
 
   // ── 清理：agent 销毁时释放状态 ────────────────────────────────────────────
-  ctx.effect(() => {
-    const timer = setInterval(() => {
-      // 每 10 分钟清理一次超过 30 分钟未活动的 agent 状态
-      const cutoff = Date.now() - 30 * 60 * 1000
-      for (const [agentId, s] of failState) {
-        const last = Math.max(...[...s.values()].map(v => v.lastAt), 0)
-        if (last < cutoff) failState.delete(agentId)
-      }
-      for (const [agentId, ts2] of toolFailState) {
-        const last = Math.max(...[...ts2.values()].map(v => v.lastAt), 0)
-        if (last < cutoff) toolFailState.delete(agentId)
-      }
-      for (const [agentId, sp] of specialState) {
-        const last = Math.max(...[...sp.values()].map(v => v.at), 0)
-        if (last < cutoff) specialState.delete(agentId)
-      }
-      for (const [agentId, at] of lastReminderAt) {
-        if (at < cutoff) lastReminderAt.delete(agentId)
-      }
-    }, 10 * 60 * 1000)
-    return () => clearInterval(timer)
-  }, 'anti-stuck: state cleanup')
+  ctx.effect(() => makeCleanupTimer((cutoff) => {
+    for (const [agentId, s] of failState) {
+      const last = Math.max(...[...s.values()].map(v => v.lastAt), 0)
+      if (last < cutoff) failState.delete(agentId)
+    }
+    for (const [agentId, ts2] of toolFailState) {
+      const last = Math.max(...[...ts2.values()].map(v => v.lastAt), 0)
+      if (last < cutoff) toolFailState.delete(agentId)
+    }
+    for (const [agentId, sp] of specialState) {
+      const last = Math.max(...[...sp.values()].map(v => v.at), 0)
+      if (last < cutoff) specialState.delete(agentId)
+    }
+    for (const [agentId, at] of lastReminderAt) {
+      if (at < cutoff) lastReminderAt.delete(agentId)
+    }
+  }), 'anti-stuck: state cleanup')
 }

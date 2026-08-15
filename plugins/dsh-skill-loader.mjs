@@ -16,6 +16,7 @@
  *                              name: 'file:///.../dsh-skill-loader.mjs'
  */
 import { randomUUID } from 'node:crypto'
+import { makeCleanupTimer } from './_shared.mjs'
 
 export const name = 'dsh-skill-loader'
 
@@ -135,16 +136,12 @@ export function apply(ctx, config = {}) {
   })
 
   // ── 清理 ─────────────────────────────────────────────────────────────
-  ctx.effect(() => {
-    const timer = setInterval(() => {
-      const cutoff = Date.now() - 30 * 60 * 1000
-      for (const [agentId, at] of injected) {
-        if (at < cutoff) injected.delete(agentId)
-      }
-      for (const [agentId, at] of listShownAt) {
-        if (at < cutoff) listShownAt.delete(agentId)
-      }
-    }, 10 * 60 * 1000)
-    return () => clearInterval(timer)
-  }, 'dsh-skill-loader: state cleanup')
+  ctx.effect(() => makeCleanupTimer((cutoff) => {
+    for (const [agentId, at] of injected) {
+      if (at < cutoff) injected.delete(agentId)
+    }
+    for (const [agentId, at] of listShownAt) {
+      if (at < cutoff) listShownAt.delete(agentId)
+    }
+  }), 'dsh-skill-loader: state cleanup')
 }
