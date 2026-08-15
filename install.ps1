@@ -44,13 +44,17 @@ if ($patchExists) { Warn "cordis.patch.yml 已存在——将备份后合并（�
 else { Warn "cordis.patch.yml 不存在——将新建（仅含 cleverer-dsh 的 include 行）" }
 
 # ── 1. 备份 ────────────────────────────────────────────────────────────
+# 无论 patch 是否存在都生成备份：存在=原内容；不存在=空 patch（`[]`，
+# DSH patch 语法顶层数组，卸载还原=回到安装前状态，安装/卸载协议对称；
+# 不能写空文件——loadOptionalPatches 要求顶层是 YAML 数组，空文件会 boot 报错）
 Step "1. 备份"
-if ($patchExists -and -not $DryRun) {
-    $bak = "$patchFile.bak-cleverer-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-    Copy-Item $patchFile $bak
+$bak = "$patchFile.bak-cleverer-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+if (-not $DryRun) {
+    if ($patchExists) { Copy-Item $patchFile $bak }
+    else { Set-Content $bak '[]' -Encoding UTF8 }
     Ok "已备份到 $bak"
-} elseif ($patchExists) {
-    Warn "[DryRun] 将备份 cordis.patch.yml"
+} else {
+    Warn "[DryRun] 将备份 cordis.patch.yml（存在=$patchExists）"
 }
 
 # ── 2. 复制插件 ────────────────────────────────────────────────────────

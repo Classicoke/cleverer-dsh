@@ -126,7 +126,7 @@ node scripts/dsh-env-check.mjs all
 ### 卸载
 
 ```powershell
-# 1. 还原安装前的配置备份
+# 1. 还原安装时的配置备份（若安装前没有 cordis.patch.yml，备份是 [] 空 patch = 回到安装前状态）
 Copy-Item "$HOME\.dsh\cordis.patch.yml.bak-cleverer-*" "$HOME\.dsh\cordis.patch.yml" -Force
 
 # 2. 删除安装的文件（插件/技能/配置文件/体检脚本）

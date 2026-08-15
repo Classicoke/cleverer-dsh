@@ -126,7 +126,8 @@ node scripts/dsh-env-check.mjs all
 ### Uninstall
 
 ```powershell
-# 1. Restore the pre-install config backup
+# 1. Restore the install backup (auto-created during install; if you had no
+#    cordis.patch.yml before, the backup is an empty [] patch = pre-install state)
 Copy-Item "$HOME\.dsh\cordis.patch.yml.bak-cleverer-*" "$HOME\.dsh\cordis.patch.yml" -Force
 
 # 2. Remove installed files (plugins/skills/configs/health script)
