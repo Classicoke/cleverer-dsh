@@ -21,12 +21,14 @@ import { randomUUID } from 'node:crypto'
 
 // ── 参数（必传，不硬编码本机路径）───────────────────────────────────
 // 用法: node replay-discipline.mjs <pluginsDir> <sessionLog>
-const PLUGINS_DIR = resolve(process.argv[2] ?? '')
-const LOG = resolve(process.argv[3] ?? '')
-if (!PLUGINS_DIR || !LOG) {
+const pluginsArg = process.argv[2]
+const logArg = process.argv[3]
+if (!pluginsArg || !logArg) {
   console.error('用法: node replay-discipline.mjs <plugins目录> <session.jsonl路径>')
   process.exit(1)
 }
+const PLUGINS_DIR = resolve(pluginsArg)
+const LOG = resolve(logArg)
 
 // ── 迷你 cordis Context（对齐 test-anti-stuck.mjs 模式 + 增强）──────────
 function makeCtx() {
