@@ -15,7 +15,7 @@ A plugin suite that makes [DeepSeek Harness (DSH)](https://github.com/deepseek-a
 | 🛠️ | **Ready-made tools**: instant multi-directory file lookup + 9-point environment health check — stop guessing |
 | 📦 | **One-command install/uninstall**: auto-backup, auto-config-merge, one-command restore |
 | 🧪 | **426 tests green**, 99.7%+ coverage; pure code, **zero dependencies**, never touches DSH itself |
-| 📚 | **7 built-in skills**: 6-step error handling, error lookup table, fast file lookup, root-cause debugging, local-first, plan-before-execute, annotated report delivery |
+| 📚 | **6 built-in skills**: 6-step error handling, error lookup table, fast file lookup, root-cause debugging, local-first, plan-before-execute |
 
 ---
 
@@ -165,7 +165,6 @@ Remove-Item "$HOME\.dsh\scripts\dsh-env-check.mjs" -ErrorAction SilentlyContinue
 | `debug-by-root-cause` | find the root cause first, don't blindly retry |
 | `local-first` | verify locally before guessing online |
 | `plan-before-execute` | plan before acting, keep the plan updated |
-| `annotated-report` | report delivery: Markdown + annotatable HTML dual format |
 
 ---
 
@@ -206,9 +205,8 @@ There is also a replay harness, `tests/replay-discipline.mjs`: feeds real DSH se
 ## Known limitations
 
 - Verified on **Windows + PowerShell** only; Linux/macOS untested (plugins are cross-platform, install scripts are PowerShell)
-- `annotated-report`'s conversion tool is an external dependency, not bundled
 - Never modifies DSH source code (high-risk area); only config injection and skill injection
-- Headless mode: some features limited (no web server → web annotation skipped)
+- Headless mode: some features limited (no web server → some web-dependent features skipped)
 
 ---
 

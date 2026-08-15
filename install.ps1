@@ -78,10 +78,11 @@ else {
 }
 
 # ── 3. 复制 skills ─────────────────────────────────────────────────────
-Step "3. 安装 skills (7 个)"
+$skillFiles = @(Get-ChildItem (Join-Path $projRoot 'skills') -Filter '*.md')
+Step "3. 安装 skills ($($skillFiles.Count) 个)"
 New-Item $skillDir -ItemType Directory -Force | Out-Null
 $skillCount = 0
-foreach ($f in (Get-ChildItem (Join-Path $projRoot 'skills') -Filter '*.md')) {
+foreach ($f in $skillFiles) {
     $target = Join-Path $skillDir $f.Name
     $skip = $false
     if ((Test-Path $target) -and -not $DryRun) {
@@ -93,7 +94,7 @@ foreach ($f in (Get-ChildItem (Join-Path $projRoot 'skills') -Filter '*.md')) {
     elseif ($skip) { Warn "跳过 $($f.Name)（内容相同）" }
     else { Copy-Item $f.FullName $target -Force; $skillCount++ }
 }
-if ($DryRun) { Warn "[DryRun] 预览 7 个 skills" } else { Ok "安装 $skillCount 个 skills（跳过相同 $((Get-ChildItem (Join-Path $projRoot 'skills') -Filter '*.md').Count - $skillCount) 个）" }
+if ($DryRun) { Warn "[DryRun] 预览 $($skillFiles.Count) 个 skills" } else { Ok "安装 $skillCount 个 skills（跳过相同 $($skillFiles.Count - $skillCount) 个）" }
 
 # ── 4. 生成子板（替换 file:// 路径为本机）────────────────────────────
 Step "4. 生成子板"

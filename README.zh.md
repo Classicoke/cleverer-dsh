@@ -15,7 +15,7 @@
 | 🛠️ | **开箱即用工具**：秒级找文件 + 9 项环境体检，遇到问题不再靠猜 |
 | 📦 | **一键安装/卸载**：自动备份、自动合并配置、一条命令还原 |
 | 🧪 | **426 项测试全绿**，覆盖率 99.7%+；纯代码、零依赖，不碰 DSH 本体 |
-| 📚 | **7 个内置技能**：错误处理六步法、错误速查表、快速找文件、根因排查、本地优先、先计划再执行、报告批注交付 |
+| 📚 | **6 个内置技能**：错误处理六步法、错误速查表、快速找文件、根因排查、本地优先、先计划再执行 |
 
 ---
 
@@ -165,7 +165,6 @@ Remove-Item "$HOME\.dsh\scripts\dsh-env-check.mjs" -ErrorAction SilentlyContinue
 | `debug-by-root-cause` | 排查问题先找根因，不盲目试 |
 | `local-first` | 能本地验证就不上网猜 |
 | `plan-before-execute` | 动手前先列计划，边做边更新 |
-| `annotated-report` | 报告交付：Markdown + 可批注网页双格式 |
 
 ---
 
@@ -206,9 +205,8 @@ node test-skill-loader.mjs      # 42 项
 ## 已知限制
 
 - 只在 **Windows + PowerShell** 上验证过；Linux/macOS 没测（插件本身跨平台，安装脚本是 PowerShell）
-- `annotated-report` 的批注转换工具是外部依赖，不随本仓库分发
 - 不修改 DSH 源码（那是高风险区）；只通过配置注入和技能注入
-- headless 模式部分功能受限（无网页服务 → 批注网页版跳过）
+- headless 模式部分功能受限（无网页服务 → 部分网页相关功能跳过）
 
 ---
 
