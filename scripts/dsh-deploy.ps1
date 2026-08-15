@@ -33,7 +33,7 @@ $prodDir   = "$env:USERPROFILE\.dsh\plugins"
 $repoDir   = $env:DSH_REPO   # 用户 DSH checkout 位置，可环境变量覆盖
 if (-not $repoDir) {
     # 尝试常见位置；找不到则报错提示设置 DSH_REPO
-    $candidates = @("$env:USERPROFILE\deepseek-harness-master", 'D:\deepseek-harness-master')
+    $candidates = @("$env:USERPROFILE\deepseek-harness-master", 'D:\deepseek-harness-master', 'C:\deepseek-harness-master')
     $repoDir = $candidates | Where-Object { Test-Path (Join-Path $_ 'apps\cli\src\bin.ts') } | Select-Object -First 1
     if (-not $repoDir) {
         Write-Host "❌ 找不到 DSH checkout（apps\cli\src\bin.ts）。请设置环境变量 DSH_REPO 指向 DSH 源码目录。" -ForegroundColor Red

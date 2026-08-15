@@ -151,16 +151,16 @@ console.log('\n=== 测试 4b: 路径名卡点 → 拒绝沉淀（P0-2 泛化门�
 const dir4b = await mkdtemp(path.join(os.tmpdir(), 'se-4b-'))
 const ctx4b = makeCtx()
 mod.apply(ctx4b, { skillsDir: dir4b })
-const a4b = fakeAgent('agent-4b')
+const agent4b = fakeAgent('agent-4b')
 // 失败指纹含绝对路径（正是本次垃圾 skill 的形态）
-await ctx4b.emit('tools/result', { name: 'read', arguments: { file_path: 'D:\\\\deepseek-harness-master\\\\apps\\\\desktop\\\\src\\\\host-boot.ts' }, agent: a4b },
+await ctx4b.emit('tools/result', { name: 'read', arguments: { file_path: 'D:\\\\repo\\\\src\\\\host-boot.ts' }, agent: agent4b },
   { isError: true, content: [{ type: 'text', text: 'EACCES permission denied' }] })
-await ctx4b.emit('tools/result', { name: 'read', arguments: { file_path: 'D:\\\\deepseek-harness-master\\\\apps\\\\desktop\\\\src\\\\host-boot.ts' }, agent: a4b },
+await ctx4b.emit('tools/result', { name: 'read', arguments: { file_path: 'D:\\\\repo\\\\src\\\\host-boot.ts' }, agent: agent4b },
   { isError: true, content: [{ type: 'text', text: 'EACCES permission denied' }] })
 // 换路成功：改用 grep
-await ctx4b.emit('tools/result', { name: 'grep', arguments: { path: 'D:\\\\deepseek-harness-master', pattern: 'host-boot' }, agent: a4b },
+await ctx4b.emit('tools/result', { name: 'grep', arguments: { path: 'D:\\\\repo', pattern: 'host-boot' }, agent: agent4b },
   { isError: false, value: { exitCode: 0 }, content: [{ type: 'text', text: 'found' }] })
-await ctx4b.emit('agent/turn-stopping', { agent: a4b, turn: 1, signal: null })
+await ctx4b.emit('agent/turn-stopping', { agent: agent4b, turn: 1, signal: null })
 const files4b = await readDir(dir4b)
 assert(files4b.length === 0, `路径名卡点被拒绝，不产生垃圾 skill (got ${files4b.length})`)
 await rm(dir4b, { recursive: true, force: true })
