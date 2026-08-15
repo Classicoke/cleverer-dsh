@@ -10,7 +10,7 @@ A plugin suite that makes [DeepSeek Harness (DSH)](https://github.com/deepseek-a
 
 | Icon | Feature |
 |---|---|
-| ⚡ | **Faster & cheaper (measured)**: same task vs bare DSH — 33% less time, 44% fewer estimated tokens (small sample, not yet broadly tested) |
+| ⚡ | **Faster & cheaper (measured)**: same task vs bare DSH — **49% faster**, 44% fewer estimated tokens (small sample, not yet broadly tested) |
 | 🧠 | **Execution discipline**: automatic failure interception, forced reflection, task-planning reminders, memory dedup, experience auto-distilled into skills |
 | 🛠️ | **Ready-made tools**: instant multi-directory file lookup + 9-point environment health check — stop guessing |
 | 📦 | **One-command install/uninstall**: auto-backup, auto-config-merge, one-command restore |
@@ -25,7 +25,7 @@ We ran the same real task (analyzing a software packaging log) on **DSH with thi
 
 | Metric | With suite | Bare DSH | Diff |
 |---|---|---|---|
-| **Total time** | 8.6 min | 12.8 min | **33% faster** |
+| **Total time** | 8.6 min | 12.8 min | **49% faster** |
 | LLM calls | 51 | 61 | -20% |
 | Tool calls | 59 | 67 | -14% |
 | **Estimated total tokens** | ~41,000 | ~73,000 | **44% fewer** |
