@@ -8,7 +8,7 @@ A plugin suite that makes [DeepSeek Harness (DSH)](https://github.com/deepseek-a
 
 ## ✨ Feature Highlights
 
-| | Feature |
+| Icon | Feature |
 |---|---|
 | ⚡ | **Faster & cheaper (measured)**: same task vs bare DSH — 33% less time, 44% fewer estimated tokens (small sample, not yet broadly tested) |
 | 🧠 | **Execution discipline**: automatic failure interception, forced reflection, task-planning reminders, memory dedup, experience auto-distilled into skills |
