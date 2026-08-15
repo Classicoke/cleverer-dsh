@@ -10,6 +10,11 @@ scripts/audit-signatures.local.ps1
 # 内部交接文档（不含发布）
 HANDOFF.md
 
+# 批注交付物（本地生成，不入库）
+*.annotated.html
+README.zh.html
+README.html
+
 # DSH 用户数据（绝不入库）
 *.bak-*
 backup-*/

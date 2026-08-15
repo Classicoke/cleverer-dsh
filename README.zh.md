@@ -82,7 +82,7 @@ cordis.patch.yml（主配置文件）
 
 ```powershell
 # 下载安装包并自动安装（需 PowerShell 7+）
-$u = 'https://github.com/<owner>/cleverer-dsh/archive/refs/tags/v1.2.zip'
+$u = 'https://github.com/gaolinleo2662/cleverer-dsh/archive/refs/tags/v1.2.zip'
 $z = "$env:TEMP\cleverer-dsh.zip"; $d = "$env:TEMP\cleverer-dsh-install"
 Invoke-WebRequest $u -OutFile $z
 Expand-Archive $z $d -Force
@@ -94,7 +94,7 @@ Remove-Item $z, $d -Recurse -Force
 
 ```powershell
 # 1. 克隆
-git clone https://github.com/<owner>/cleverer-dsh
+git clone https://github.com/gaolinleo2662/cleverer-dsh
 cd cleverer-dsh
 
 # 2. 安装（自动：备份现有配置 → 复制插件/技能/脚本 → 生成配置文件 → 合并，不会重复装）
