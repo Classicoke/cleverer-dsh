@@ -50,6 +50,26 @@ DSH 功能齐全，但**不够聪明**：系统提示词是空的、失败了会
 
 ---
 
+## 架构
+
+```
+cordis.patch.yml
+├─ discipline-hub          协作中枢（失败记录 / 提醒限流 / 回合统计）
+├─ anti-stuck              死磕拦截：同样的错误不让重复试、强制换思路
+├─ dsh-env-triage          问题溯源：几个方案都失败就停下来报告
+├─ dsh-plan-discipline     任务规划：多步骤任务提醒建计划
+├─ dsh-memory              跨会话记忆：自动去重、防膨胀
+├─ skill-evolver           经验沉淀：失败→解法→自动存成技能
+├─ dsh-discipline          执行规则：每轮注入 11 条做事纪律
+├─ dsh-skill-loader        技能调用：按需提醒用技能
+├─ dsh-skill-provider      技能注册：6 个内置技能随包直接可用
+├─ dsh-cordis-discipline   插件使用规范：防止乱装乱卸载
+├─ dsh-fast-locate         找文件工具：一次扫描多个目录
+└─ dsh-env-check-tool      环境体检工具：9 项检查
+```
+
+---
+
 ## 安装
 
 **前置要求**：已安装 DSH 并初始化过 `~/.dsh`；需要 `pnpm`（DSH 插件管理器）。

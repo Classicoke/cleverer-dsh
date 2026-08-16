@@ -50,6 +50,26 @@ DSH is full-featured but **not smart by default**: empty system prompt, stubborn
 
 ---
 
+## Architecture
+
+```
+cordis.patch.yml
+├─ discipline-hub          hub (failure log / reminder throttle / turn stats)
+├─ anti-stuck              stuck-loop guard: no repeat same-arg retries, force new approach
+├─ dsh-env-triage          problem tracing: stop & report when several schemes fail
+├─ dsh-plan-discipline     task planning: remind to create a plan for multi-step tasks
+├─ dsh-memory              cross-session memory: auto-dedup, anti-bloat
+├─ skill-evolver           experience distillation: failure → solution → saved skill
+├─ dsh-discipline          11 execution rules injected every turn
+├─ dsh-skill-loader        skill usage boost: on-demand catalog + keyword summoning
+├─ dsh-skill-provider      runtime skill registry: the 6 bundled skills resolve in-package
+├─ dsh-cordis-discipline   dynamic-plugin guardrail: no run before define, no undefine before stop
+├─ dsh-fast-locate         file lookup: parallel multi-directory scan
+└─ dsh-env-check-tool      env health check: 9 checks
+```
+
+---
+
 ## Installation
 
 **Prerequisites**: DSH installed and initialized; `pnpm` available (DSH's plugin manager).
