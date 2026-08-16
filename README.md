@@ -140,20 +140,27 @@ Remove-Item $z, $d -Recurse -Force
 ```powershell
 # 1. Restore the config backup install auto-created (if you had no
 #    cordis.patch.yml before, the backup is an empty [] patch = pre-install state)
-$bak = Get-ChildItem "$HOME\.dsh\cordis.patch.yml.bak-cleverer-*" |
+$dshHome = Join-Path $HOME '.dsh'
+if (-not (Test-Path $dshHome)) { Write-Host "Not found: $dshHome — aborting"; exit 1 }
+$bak = Get-ChildItem "$dshHome\cordis.patch.yml.bak-cleverer-*" |
        Sort-Object LastWriteTime -Descending | Select-Object -First 1
-if ($bak) { Copy-Item $bak.FullName "$HOME\.dsh\cordis.patch.yml" -Force }
+if ($bak) { Copy-Item $bak.FullName "$dshHome\cordis.patch.yml" -Force }
 
-# 2. Remove installed files (plugins / boards / health script / skills)
-Remove-Item "$HOME\.dsh\plugins\*.mjs" -ErrorAction SilentlyContinue
-Remove-Item "$HOME\.dsh\discipline-board.cordis.yml", "$HOME\.dsh\tools-board.cordis.yml" -ErrorAction SilentlyContinue
-Remove-Item "$HOME\.dsh\scripts\dsh-env-check.mjs" -ErrorAction SilentlyContinue
-Remove-Item "$HOME\.dsh\skills\*.md" -ErrorAction SilentlyContinue
+# 2. Remove ONLY the files cleverer-dsh installed (explicit list — your own
+#    plugins/skills in the same folders are left untouched)
+$plugins = @('_shared','anti-stuck','discipline-hub','dsh-cordis-discipline','dsh-discipline',
+             'dsh-env-check-tool','dsh-env-triage','dsh-fast-locate','dsh-memory',
+             'dsh-plan-discipline','dsh-skill-loader','dsh-skill-provider','skill-evolver')
+foreach ($p in $plugins) { Remove-Item "$dshHome\plugins\$p.mjs" -ErrorAction SilentlyContinue }
+$skills = @('debug-by-root-cause','dsh-error-protocol','dsh-error-triage','dsh-fast-lookup','local-first','plan-before-execute')
+foreach ($s in $skills) { Remove-Item "$dshHome\skills\$s.md" -ErrorAction SilentlyContinue }
+Remove-Item "$dshHome\discipline-board.cordis.yml", "$dshHome\tools-board.cordis.yml" -ErrorAction SilentlyContinue
+Remove-Item "$dshHome\scripts\dsh-env-check.mjs" -ErrorAction SilentlyContinue
 
 # 3. Restart DSH
 ```
 
-> ⚠️ Step 2 deletes every `.mjs` in `~/.dsh/plugins/` and every `.md` in `~/.dsh/skills/`. If you have other plugins/skills there, delete only the cleverer-dsh files instead (`_shared.mjs`, `anti-stuck.mjs`, `discipline-hub.mjs`, `dsh-*.mjs`, `skill-evolver.mjs`).
+All deletions are scoped to `$HOME\.dsh` (your own user directory, never a system path), and only the files listed above are touched.
 
 ---
 

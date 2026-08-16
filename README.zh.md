@@ -139,20 +139,26 @@ Remove-Item $z, $d -Recurse -Force
 
 ```powershell
 # 1. 还原安装时自动备份的配置（安装前没有 cordis.patch.yml 的，备份是空 []，还原=回到安装前状态）
-$bak = Get-ChildItem "$HOME\.dsh\cordis.patch.yml.bak-cleverer-*" |
+$dshHome = Join-Path $HOME '.dsh'
+if (-not (Test-Path $dshHome)) { Write-Host "未找到 $dshHome，已中止"; exit 1 }
+$bak = Get-ChildItem "$dshHome\cordis.patch.yml.bak-cleverer-*" |
        Sort-Object LastWriteTime -Descending | Select-Object -First 1
-if ($bak) { Copy-Item $bak.FullName "$HOME\.dsh\cordis.patch.yml" -Force }
+if ($bak) { Copy-Item $bak.FullName "$dshHome\cordis.patch.yml" -Force }
 
-# 2. 删除安装的文件（插件 / 子板 / 体检脚本 / 技能）
-Remove-Item "$HOME\.dsh\plugins\*.mjs" -ErrorAction SilentlyContinue
-Remove-Item "$HOME\.dsh\discipline-board.cordis.yml", "$HOME\.dsh\tools-board.cordis.yml" -ErrorAction SilentlyContinue
-Remove-Item "$HOME\.dsh\scripts\dsh-env-check.mjs" -ErrorAction SilentlyContinue
-Remove-Item "$HOME\.dsh\skills\*.md" -ErrorAction SilentlyContinue
+# 2. 只删除 cleverer-dsh 安装的文件（精确清单——你自己装的插件/技能在同一目录也不会被误删）
+$plugins = @('_shared','anti-stuck','discipline-hub','dsh-cordis-discipline','dsh-discipline',
+             'dsh-env-check-tool','dsh-env-triage','dsh-fast-locate','dsh-memory',
+             'dsh-plan-discipline','dsh-skill-loader','dsh-skill-provider','skill-evolver')
+foreach ($p in $plugins) { Remove-Item "$dshHome\plugins\$p.mjs" -ErrorAction SilentlyContinue }
+$skills = @('debug-by-root-cause','dsh-error-protocol','dsh-error-triage','dsh-fast-lookup','local-first','plan-before-execute')
+foreach ($s in $skills) { Remove-Item "$dshHome\skills\$s.md" -ErrorAction SilentlyContinue }
+Remove-Item "$dshHome\discipline-board.cordis.yml", "$dshHome\tools-board.cordis.yml" -ErrorAction SilentlyContinue
+Remove-Item "$dshHome\scripts\dsh-env-check.mjs" -ErrorAction SilentlyContinue
 
 # 3. 重启 DSH
 ```
 
-> ⚠️ 第 2 步会删除 `~/.dsh/plugins/` 下所有 `.mjs` 和 `~/.dsh/skills/` 下所有 `.md`。如果你自己装过其他插件/技能，请只删 cleverer-dsh 的文件（`_shared.mjs`、`anti-stuck.mjs`、`discipline-hub.mjs`、`dsh-*.mjs`、`skill-evolver.mjs`）。
+所有删除都限定在 `$HOME\.dsh`（你自己的用户目录，绝不可能是系统路径），且只碰上面列出的文件。
 
 ---
 
