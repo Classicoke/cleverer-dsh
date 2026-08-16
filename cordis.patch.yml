@@ -1,0 +1,89 @@
+# cleverer-dsh bundle patch — installed via `dsh plugin add github:Classicoke/cleverer-dsh`
+# (or any git/path spec). Applied as a profile bundle layer; every plugin is
+# resolved as `cleverer-dsh/plugins/<file>.mjs` from the profile's node_modules
+# (pnpm hoisted layout), so no absolute paths and no {{DSH_HOME}} templates.
+#
+# If you previously installed cleverer-dsh manually (install.ps1), uninstall it
+# first — mounting both ways applies every plugin twice (duplicated event hooks,
+# doubled failure counters, premature denials).
+- insert:
+    # discipline-hub must load first — it builds the __errLog / __reminder /
+    # __hubStats collaboration facilities the other discipline plugins read.
+    - id: discipline-hub
+      name: 'cleverer-dsh/plugins/discipline-hub.mjs'
+      config:
+        maxRemindersPerStep: 2
+
+    # ── interception: identical-retry denial + reflection injection ────────
+    - id: anti-stuck
+      name: 'cleverer-dsh/plugins/anti-stuck.mjs'
+      config:
+        maxSameFingerprintFails: 2
+        maxFailsBeforeReflect: 3
+        maxFailsBeforeSteer: 5
+
+    # ── root-cause triage (scheme-level, O3 responsibility split) ──────────
+    - id: dsh-env-triage
+      name: 'cleverer-dsh/plugins/dsh-env-triage.mjs'
+      config:
+        minFailsForTrace: 2
+        maxSchemesBeforeReport: 3
+
+    # ── planning: todo discipline ───────────────────────────────────────────
+    - id: dsh-plan-discipline
+      name: 'cleverer-dsh/plugins/dsh-plan-discipline.mjs'
+      config:
+        enabled: true
+        maxRemindersPerTurn: 2
+        failDensityTodoRefresh: 3
+
+    # ── cross-session memory with dedup ────────────────────────────────────
+    - id: dsh-memory
+      name: 'cleverer-dsh/plugins/dsh-memory.mjs'
+      config:
+        enabled: true
+
+    # ── self-evolving skills (failure → success harvesting) ────────────────
+    - id: skill-evolver
+      name: 'cleverer-dsh/plugins/skill-evolver.mjs'
+      config:
+        enabled: true
+
+    # ── system-prompt discipline section (injected every turn) ─────────────
+    - id: dsh-discipline
+      name: 'cleverer-dsh/plugins/dsh-discipline.mjs'
+      config:
+        enabled: true
+
+    # ── skill loading promotion (conditional catalog + keyword naming) ─────
+    - id: dsh-skill-loader
+      name: 'cleverer-dsh/plugins/dsh-skill-loader.mjs'
+      config:
+        enabled: true
+
+    # ── runtime skill provider: registers the 6 bundled skills (skills/*.md)
+    #    via ctx.skills.register() so the model's skill tool can load them ──
+    - id: dsh-skill-provider
+      name: 'cleverer-dsh/plugins/dsh-skill-provider.mjs'
+      config:
+        enabled: true
+
+    # ── cordis dynamic-plugin discipline (three-layer guard) ───────────────
+    - id: dsh-cordis-discipline
+      name: 'cleverer-dsh/plugins/dsh-cordis-discipline.mjs'
+      config:
+        enabled: true
+
+    # ── functional layer: fast file lookup ─────────────────────────────────
+    - id: dsh-fast-locate
+      name: 'cleverer-dsh/plugins/dsh-fast-locate.mjs'
+      config:
+        maxDepth: 5
+        limit: 50
+
+    # ── functional layer: env check tool (default scriptPath resolves
+    #    ../scripts/dsh-env-check.mjs inside this package — no config needed) ──
+    - id: dsh-env-check-tool
+      name: 'cleverer-dsh/plugins/dsh-env-check-tool.mjs'
+      config:
+        timeoutMs: 60000

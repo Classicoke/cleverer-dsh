@@ -46,37 +46,51 @@ DSH is full-featured but **not smart by default**: empty system prompt, stubborn
 | **Discipline layer** (8 plugins) | event hooks + system-prompt injection | failure interception, forced reflection, task planning, memory dedup |
 | **Hub** (discipline-hub) | shared failure log + reminder throttling + stats | plugins don't collide, issues are traceable |
 | **Tools layer** (2 plugins) | new tool registration | instant file lookup, env health check |
-| **Skill layer** (7 skills) | on-demand auto-loading | know what to do on errors, find things fast, deliver reports properly |
+| **Skill layer** (6 skills) | on-demand auto-loading | know what to do on errors, find things fast, deliver reports properly |
 
 ---
 
 ## Architecture
 
 ```
-cordis.patch.yml (main config)
+cordis.patch.yml (bundle patch — installed via `dsh plugin add`)
 ├─ discipline-hub          hub (failure log / reminder throttle / turn stats)
-├─ discipline-board        discipline plugins
-│  ├─ anti-stuck           stuck-loop guard: no repeat same-arg retries, force new approach
-│  ├─ dsh-env-triage       problem tracing: stop & report when several schemes fail
-│  ├─ dsh-plan-discipline  task planning: remind to create a plan for multi-step tasks
-│  ├─ dsh-memory           cross-session memory: auto-dedup, anti-bloat
-│  ├─ skill-evolver        experience distillation: failure → solution → saved skill
-│  ├─ dsh-discipline       11 execution rules injected every turn
-│  ├─ dsh-skill-loader     skill usage boost: on-demand catalog + keyword summoning
-│  └─ dsh-cordis-discipline dynamic-plugin guardrail: no run before define, no undefine before stop
-├─ tools-board             tools
-│  ├─ dsh-fast-locate      file lookup: parallel multi-directory scan
-│  └─ dsh-env-check-tool   env health check: 9 checks
-└─ official packages (schedule/lsp/...) stay untouched
+├─ anti-stuck              stuck-loop guard: no repeat same-arg retries, force new approach
+├─ dsh-env-triage          problem tracing: stop & report when several schemes fail
+├─ dsh-plan-discipline     task planning: remind to create a plan for multi-step tasks
+├─ dsh-memory              cross-session memory: auto-dedup, anti-bloat
+├─ skill-evolver           experience distillation: failure → solution → saved skill
+├─ dsh-discipline          11 execution rules injected every turn
+├─ dsh-skill-loader        skill usage boost: on-demand catalog + keyword summoning
+├─ dsh-skill-provider      runtime skill registry: the 6 bundled skills resolve in-package
+├─ dsh-cordis-discipline   dynamic-plugin guardrail: no run before define, no undefine before stop
+├─ dsh-fast-locate         file lookup: parallel multi-directory scan
+└─ dsh-env-check-tool      env health check: 9 checks
 ```
+Installed as a DSH bundle, all plugins live in one patch layer and resolve from the package itself (no absolute paths, no file copies). Official packages (schedule/lsp/...) stay untouched.
 
 ---
 
 ## Installation
 
-**Prerequisites**: DSH installed and `~/.dsh` initialized; `node` available (plugins are zero-dep, node only for validation). Optional: set `DSH_REPO` to your DSH source checkout (needed for the packaging check in env health).
+**Prerequisites**: DSH installed and initialized; `pnpm` available for Option 1 (DSH's plugin manager); `node` available for the manual script. Optional: set `DSH_REPO` to your DSH source checkout (needed for the packaging check in env health).
 
-### Option 1: One-command install (recommended)
+### Option 1: Install via DSH's plugin manager (recommended)
+
+One command — DSH resolves the package, detects its `dsh.bundle` manifest, and adds it to the profile's bundle layers automatically:
+
+```bash
+dsh plugin --profile web add github:Classicoke/cleverer-dsh
+# headless instead:  dsh plugin --profile headless add github:Classicoke/cleverer-dsh
+```
+
+No build step (zero dependencies, no `prepare` script → no pnpm `allowBuilds` prompt); all 12 plugins and 6 skills resolve from inside the package. Uninstall:
+
+```bash
+dsh plugin --profile web remove cleverer-dsh
+```
+
+### Option 2: One-command script install (PowerShell 7+)
 
 Paste this into PowerShell (auto-downloads the release zip → extracts → installs → cleans up):
 
@@ -90,7 +104,7 @@ pwsh -File "$d\cleverer-dsh-1.2\install.ps1"
 Remove-Item $z, $d -Recurse -Force
 ```
 
-### Option 2: Install from source
+### Option 3: Install from source
 
 ```powershell
 # 1. Clone
@@ -103,12 +117,14 @@ pwsh -File install.ps1
 # 3. Restart DSH to activate (reopen the desktop app, or restart the dsh web process)
 ```
 
+> ⚠️ **Pick ONE install method.** Options 1 and 2/3 mount the same plugins through different layers — installing both applies every plugin twice (doubled event hooks, doubled failure counters, premature denials). Uninstall one before switching to the other.
+
 **What you get**:
 
 | Component | Description |
 |---|---|
-| `plugins/` | 12 files (11 plugins + 1 shared module — copy the whole set) |
-| `skills/` | 7 skills (identical files skipped) |
+| `plugins/` | 13 files (12 plugins + 1 shared module — copy the whole set) |
+| `skills/` | 6 skills (identical files skipped) |
 | `scripts/dsh-env-check.mjs` | env health script, installed to `<DSH_HOME>/scripts/` |
 | 2 config files | plugin group configs (your local paths auto-filled) |
 | config merge | never duplicated; original backed up as `.bak-cleverer-*` |

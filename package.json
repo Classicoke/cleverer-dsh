@@ -1,0 +1,20 @@
+{
+  "name": "cleverer-dsh",
+  "version": "1.2.0",
+  "description": "Execution-discipline plugin suite for DeepSeek Harness: anti-stuck retry interception, forced reflection, todo discipline, memory dedup, and self-evolving skills. Zero dependencies, never touches DSH source.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "dsh-plugin",
+    "dsh",
+    "deepseek-harness",
+    "cordis",
+    "ai-agents",
+    "agent-skills"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

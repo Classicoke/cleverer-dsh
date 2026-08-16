@@ -46,37 +46,51 @@ DSH 功能齐全，但**不够聪明**：系统提示词是空的、失败了会
 | **纪律层**（8 个插件） | 监听运行过程 + 注入执行规则 | 失败拦截、强制反思、任务规划、记忆去重 |
 | **协作中枢**（discipline-hub） | 共享失败日志 + 提醒限流 + 统计 | 插件不打架、问题可追溯 |
 | **工具层**（2 个插件） | 注册新工具 | 秒级找文件、环境体检 |
-| **技能层**（7 个技能） | 按需自动加载 | 出错知道怎么办、找东西快、报告会交付 |
+| **技能层**（6 个技能） | 按需自动加载 | 出错知道怎么办、找东西快、报告会交付 |
 
 ---
 
 ## 架构
 
 ```
-cordis.patch.yml（主配置文件）
+cordis.patch.yml（bundle 插件配置——`dsh plugin add` 安装后自动生效）
 ├─ discipline-hub          协作中枢（失败记录 / 提醒限流 / 回合统计）
-├─ discipline-board        纪律插件组
-│  ├─ anti-stuck           死磕拦截：同样的错误不让重复试、强制换思路
-│  ├─ dsh-env-triage       问题溯源：几个方案都失败就停下来报告
-│  ├─ dsh-plan-discipline  任务规划：多步骤任务提醒建计划
-│  ├─ dsh-memory           跨会话记忆：自动去重、防膨胀
-│  ├─ skill-evolver        经验沉淀：失败→解法→自动存成技能
-│  ├─ dsh-discipline       执行规则：每轮注入 11 条做事纪律
-│  ├─ dsh-skill-loader     技能调用：按需提醒用技能
-│  └─ dsh-cordis-discipline 插件使用规范：防止乱装乱卸载
-├─ tools-board             工具组
-│  ├─ dsh-fast-locate      找文件工具：一次扫描多个目录
-│  └─ dsh-env-check-tool   环境体检工具：9 项检查
-└─ 官方自带功能（定时任务/代码导航等）保持不动
+├─ anti-stuck              死磕拦截：同样的错误不让重复试、强制换思路
+├─ dsh-env-triage          问题溯源：几个方案都失败就停下来报告
+├─ dsh-plan-discipline     任务规划：多步骤任务提醒建计划
+├─ dsh-memory              跨会话记忆：自动去重、防膨胀
+├─ skill-evolver           经验沉淀：失败→解法→自动存成技能
+├─ dsh-discipline          执行规则：每轮注入 11 条做事纪律
+├─ dsh-skill-loader        技能调用：按需提醒用技能
+├─ dsh-skill-provider      技能注册：6 个内置技能随包直接可用
+├─ dsh-cordis-discipline   插件使用规范：防止乱装乱卸载
+├─ dsh-fast-locate         找文件工具：一次扫描多个目录
+└─ dsh-env-check-tool      环境体检工具：9 项检查
 ```
+以 DSH bundle 形态安装时，所有插件在同一层配置里，从包内直接解析（无绝对路径、零文件复制）。官方自带功能（定时任务/代码导航等）保持不动。
 
 ---
 
 ## 安装
 
-**前置要求**：已安装 DSH 并初始化过 `~/.dsh`；电脑有 `node`（插件本身零依赖，node 只用来做校验）。可选：设置 `DSH_REPO` 环境变量指向 DSH 源码目录（环境体检的打包检查项需要）。
+**前置要求**：已安装 DSH 并初始化过 `~/.dsh`；方式一需要 `pnpm`（DSH 插件管理器），手动方式需要 `node`（插件本身零依赖，node 只用来做校验）。可选：设置 `DSH_REPO` 环境变量指向 DSH 源码目录（环境体检的打包检查项需要）。
 
-### 方式一：一键安装（推荐）
+### 方式一：DSH 插件管理器安装（推荐）
+
+一条命令——DSH 自动解析包、识别 `dsh.bundle` 声明、加入当前 profile 的插件层：
+
+```bash
+dsh plugin --profile web add github:Classicoke/cleverer-dsh
+# headless 用户：  dsh plugin --profile headless add github:Classicoke/cleverer-dsh
+```
+
+无需构建（零依赖、无 prepare 脚本，pnpm 不会弹 allowBuilds 授权）；12 个插件 + 6 个技能全部从包内解析，零文件复制。卸载：
+
+```bash
+dsh plugin --profile web remove cleverer-dsh
+```
+
+### 方式二：一键脚本安装（需 PowerShell 7+）
 
 在 PowerShell 里粘贴这一行（会自动下载发布包 → 解压 → 安装 → 清理临时文件）：
 
@@ -90,7 +104,7 @@ pwsh -File "$d\cleverer-dsh-1.2\install.ps1"
 Remove-Item $z, $d -Recurse -Force
 ```
 
-### 方式二：从源码安装
+### 方式三：从源码安装
 
 ```powershell
 # 1. 克隆
@@ -103,12 +117,14 @@ pwsh -File install.ps1
 # 3. 重启 DSH 生效（重开桌面应用，或重启 dsh web 进程）
 ```
 
+> ⚠️ **两种安装方式二选一。** 方式一与方式二/三会把同一批插件挂在不同层——同时安装 = 每个插件被加载两次（事件监听翻倍、失败计数翻倍、提前误判）。切换方式前先卸载另一种。
+
 **安装后你会得到**：
 
 | 组件 | 说明 |
 |---|---|
-| `plugins/` | 12 个文件（11 个插件 + 1 个公共模块，必须整包复制） |
-| `skills/` | 7 个技能（内容相同会自动跳过） |
+| `plugins/` | 13 个文件（12 个插件 + 1 个公共模块，必须整包复制） |
+| `skills/` | 6 个技能（内容相同会自动跳过） |
 | `scripts/dsh-env-check.mjs` | 环境体检脚本，装到 `<DSH_HOME>/scripts/` |
 | 2 个配置文件 | 插件分组配置（自动填好你的本机路径） |
 | 主配置合并 | 不会重复添加，原文件备份为 `.bak-cleverer-*` |
