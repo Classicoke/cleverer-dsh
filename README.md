@@ -68,6 +68,8 @@ cordis.patch.yml
 └─ dsh-env-check-tool      env health check: 9 checks
 ```
 
+*Shown as installed via Option 1 (plugin manager): all plugins load from one inline patch. Option 2 (script install) organizes the same plugins into `discipline-board` / `tools-board` groups — identical plugins, identical behavior.*
+
 ---
 
 ## Installation

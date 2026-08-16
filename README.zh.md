@@ -68,6 +68,8 @@ cordis.patch.yml
 └─ dsh-env-check-tool      环境体检工具：9 项检查
 ```
 
+*图为方式一（插件管理器）安装后的结构：所有插件内联在同一个配置里。方式二（脚本安装）会把同一批插件组织成 `discipline-board` / `tools-board` 两个子板——插件与行为完全相同。*
+
 ---
 
 ## 安装
