@@ -114,6 +114,26 @@ Remove-Item $z, $d -Recurse -Force
 
 > ⚠️ **Pick ONE install method.** Installing both applies every plugin twice (duplicated behavior, premature denials). Uninstall one before switching to the other.
 
+#### Uninstall (Option 2)
+
+```powershell
+# 1. Restore the config backup install auto-created (if you had no
+#    cordis.patch.yml before, the backup is an empty [] patch = pre-install state)
+$bak = Get-ChildItem "$HOME\.dsh\cordis.patch.yml.bak-cleverer-*" |
+       Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if ($bak) { Copy-Item $bak.FullName "$HOME\.dsh\cordis.patch.yml" -Force }
+
+# 2. Remove installed files (plugins / boards / health script / skills)
+Remove-Item "$HOME\.dsh\plugins\*.mjs" -ErrorAction SilentlyContinue
+Remove-Item "$HOME\.dsh\discipline-board.cordis.yml", "$HOME\.dsh\tools-board.cordis.yml" -ErrorAction SilentlyContinue
+Remove-Item "$HOME\.dsh\scripts\dsh-env-check.mjs" -ErrorAction SilentlyContinue
+Remove-Item "$HOME\.dsh\skills\*.md" -ErrorAction SilentlyContinue
+
+# 3. Restart DSH
+```
+
+> ⚠️ Step 2 deletes every `.mjs` in `~/.dsh/plugins/` and every `.md` in `~/.dsh/skills/`. If you have other plugins/skills there, delete only the cleverer-dsh files instead (`_shared.mjs`, `anti-stuck.mjs`, `discipline-hub.mjs`, `dsh-*.mjs`, `skill-evolver.mjs`).
+
 ---
 
 ## Plugins

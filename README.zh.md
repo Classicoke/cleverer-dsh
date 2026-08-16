@@ -114,6 +114,25 @@ Remove-Item $z, $d -Recurse -Force
 
 > ⚠️ **两种安装方式二选一。** 同时安装 = 每个插件被加载两次（行为重复、提前误判）。切换方式前先卸载另一种。
 
+#### 方式二卸载
+
+```powershell
+# 1. 还原安装时自动备份的配置（安装前没有 cordis.patch.yml 的，备份是空 []，还原=回到安装前状态）
+$bak = Get-ChildItem "$HOME\.dsh\cordis.patch.yml.bak-cleverer-*" |
+       Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if ($bak) { Copy-Item $bak.FullName "$HOME\.dsh\cordis.patch.yml" -Force }
+
+# 2. 删除安装的文件（插件 / 子板 / 体检脚本 / 技能）
+Remove-Item "$HOME\.dsh\plugins\*.mjs" -ErrorAction SilentlyContinue
+Remove-Item "$HOME\.dsh\discipline-board.cordis.yml", "$HOME\.dsh\tools-board.cordis.yml" -ErrorAction SilentlyContinue
+Remove-Item "$HOME\.dsh\scripts\dsh-env-check.mjs" -ErrorAction SilentlyContinue
+Remove-Item "$HOME\.dsh\skills\*.md" -ErrorAction SilentlyContinue
+
+# 3. 重启 DSH
+```
+
+> ⚠️ 第 2 步会删除 `~/.dsh/plugins/` 下所有 `.mjs` 和 `~/.dsh/skills/` 下所有 `.md`。如果你自己装过其他插件/技能，请只删 cleverer-dsh 的文件（`_shared.mjs`、`anti-stuck.mjs`、`discipline-hub.mjs`、`dsh-*.mjs`、`skill-evolver.mjs`）。
+
 ---
 
 ## 插件一览
