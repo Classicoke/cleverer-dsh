@@ -78,7 +78,7 @@ cordis.patch.yml
 
 **Choose before you install** — the two options differ in how plugins are organized:
 
-| | Option 1: plugin manager | Option 2: script install |
+| | Option 1: plugin manager (official) | Option 2: script install |
 |---|---|---|
 | Command | `dsh plugin add ...` | paste one PowerShell line |
 | Plugin organization | all plugins in one inline config | grouped into `discipline-board` (discipline) + `tools-board` (tools) boards |
@@ -86,7 +86,7 @@ cordis.patch.yml
 
 > 💡 **Why boards are the better architecture**: the plugins are not meant to work in isolation — one traces the root cause, one distills the lesson, one reminds you to plan. Boards make this cooperation a **structural guarantee** (plugins belong to the same group and share the same facilities by construction) instead of leaving it to chance. Discipline and tools are physically separated with clear boundaries, so adding your own plugin later has an obvious home; groups start/stop as a whole, which makes upgrades and troubleshooting simpler.
 
-### Option 1: via DSH's plugin manager (recommended)
+### Option 1: via DSH's plugin manager (official)
 
 ```bash
 dsh plugin --profile web add github:Classicoke/cleverer-dsh
