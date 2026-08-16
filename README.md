@@ -68,13 +68,23 @@ cordis.patch.yml
 └─ dsh-env-check-tool      env health check: 9 checks
 ```
 
-*Shown as installed via Option 1 (plugin manager): all plugins load from one inline patch. Option 2 (script install) organizes the same plugins into `discipline-board` / `tools-board` groups — identical plugins, identical behavior.*
+*Shown as installed via Option 1 (plugin manager): all plugins load from one inline patch. Option 2 (script install) goes further — the same plugins are organized into `discipline-board` / `tools-board` boards, sharing a unified failure log and reminder pipeline, so they cooperate as one suite rather than working in isolation.*
 
 ---
 
 ## Installation
 
 **Prerequisites**: DSH installed and initialized; `pnpm` available (DSH's plugin manager).
+
+**Choose before you install** — the two options differ in how plugins are organized:
+
+| | Option 1: plugin manager | Option 2: script install |
+|---|---|---|
+| Command | `dsh plugin add ...` | paste one PowerShell line |
+| Plugin organization | all plugins in one inline config | grouped into `discipline-board` (discipline) + `tools-board` (tools) boards |
+| Plugin cooperation | plugins work independently | **stronger** — discipline plugins share one failure log & reminder pipeline, working as one suite |
+
+> 💡 **Why boards are the better architecture**: the plugins are not meant to work in isolation — one traces the root cause, one distills the lesson, one reminds you to plan. Boards make this cooperation a **structural guarantee** (plugins belong to the same group and share the same facilities by construction) instead of leaving it to chance. Discipline and tools are physically separated with clear boundaries, so adding your own plugin later has an obvious home; groups start/stop as a whole, which makes upgrades and troubleshooting simpler.
 
 ### Option 1: via DSH's plugin manager (recommended)
 
