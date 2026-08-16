@@ -52,6 +52,8 @@ DSH 功能齐全，但**不够聪明**：系统提示词是空的、失败了会
 
 ## 架构
 
+### 方式一安装（插件管理器）——所有插件内联在一个配置
+
 ```
 cordis.patch.yml
 ├─ discipline-hub          协作中枢（失败记录 / 提醒限流 / 回合统计）
@@ -68,7 +70,26 @@ cordis.patch.yml
 └─ dsh-env-check-tool      环境体检工具：9 项检查
 ```
 
-*图为方式一（插件管理器）安装后的结构：所有插件内联在同一个配置里。方式二（脚本安装）更进一步——同一批插件组织成 `discipline-board` / `tools-board` 两个子板，共享统一的失败记录与提醒通道，作为一个整体协同工作，而不是各自为战。*
+### 方式二安装（脚本安装）——插件分组为子板
+
+```
+cordis.patch.yml（主配置）
+├─ discipline-hub              协作中枢，最先加载（失败记录 / 提醒限流 / 回合统计）
+├─ cordis:include → discipline-board.cordis.yml   （纪律组，8 个插件）
+│  ├─ anti-stuck               死磕拦截
+│  ├─ dsh-env-triage           问题溯源
+│  ├─ dsh-plan-discipline      任务规划
+│  ├─ dsh-memory               记忆去重
+│  ├─ skill-evolver            经验沉淀
+│  ├─ dsh-discipline           11 条执行纪律
+│  ├─ dsh-skill-loader         技能调用
+│  └─ dsh-cordis-discipline    插件使用规范
+└─ cordis:include → tools-board.cordis.yml        （工具组，2 个插件）
+   ├─ dsh-fast-locate          找文件工具
+   └─ dsh-env-check-tool       环境体检工具
+```
+
+子板布局让插件协作成为结构保证：纪律组通过协作中枢共享统一的失败记录与提醒通道，作为一个整体协同工作，而不是各自为战。
 
 ---
 

@@ -52,6 +52,8 @@ DSH is full-featured but **not smart by default**: empty system prompt, stubborn
 
 ## Architecture
 
+### Installed via Option 1 (plugin manager) — all plugins in one inline patch
+
 ```
 cordis.patch.yml
 ├─ discipline-hub          hub (failure log / reminder throttle / turn stats)
@@ -68,7 +70,26 @@ cordis.patch.yml
 └─ dsh-env-check-tool      env health check: 9 checks
 ```
 
-*Shown as installed via Option 1 (plugin manager): all plugins load from one inline patch. Option 2 (script install) goes further — the same plugins are organized into `discipline-board` / `tools-board` boards, sharing a unified failure log and reminder pipeline, so they cooperate as one suite rather than working in isolation.*
+### Installed via Option 2 (script install) — grouped into boards
+
+```
+cordis.patch.yml (home patch)
+├─ discipline-hub              hub, loaded first (failure log / reminder throttle / turn stats)
+├─ cordis:include → discipline-board.cordis.yml   (8 discipline plugins)
+│  ├─ anti-stuck               stuck-loop guard
+│  ├─ dsh-env-triage           problem tracing
+│  ├─ dsh-plan-discipline      task planning
+│  ├─ dsh-memory               memory dedup
+│  ├─ skill-evolver            experience distillation
+│  ├─ dsh-discipline           11 execution rules
+│  ├─ dsh-skill-loader         skill usage boost
+│  └─ dsh-cordis-discipline    dynamic-plugin guardrail
+└─ cordis:include → tools-board.cordis.yml        (2 tool plugins)
+   ├─ dsh-fast-locate          file lookup
+   └─ dsh-env-check-tool       env health check
+```
+
+The board layout makes plugin cooperation structural: the discipline group shares the hub's unified failure log and reminder pipeline, working as one suite instead of in isolation.
 
 ---
 
