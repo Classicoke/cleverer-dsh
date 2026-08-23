@@ -1,12 +1,12 @@
 # 测试方法论
 
-## 一、单元测试（426 项，每次改动后跑）
+## 一、单元测试（495 项，每次改动后跑）
 
 ```powershell
 pwsh -File tests/run-all.ps1
 # 或逐个：
 cd tests
-node test-anti-stuck.mjs        # 41：deny/成功清零/指纹归一化/注入/steer 去重/边界
+node test-anti-stuck.mjs        # 58：deny/成功清零/指纹归一化/注入/steer 去重/边界/分段Read不误杀/长参数取样
 node test-cordis-discipline.mjs # 44：define/run/stop/undefine 生命周期/result 确认/steer
 node test-discipline-hub.mjs    # 35：errLog 聚合/仲裁限流/错误分类/容量/清理
 node test-dsh-discipline.mjs    # 24：纪律段注册/text/order 覆盖/无 logger
@@ -18,6 +18,7 @@ node test-fast-locate.mjs       # 32：并行扫描/glob/噪音跳过/截断/jun
 node test-plan-discipline.mjs   # 29：多步骤信号/todo 判定/限流/试错期刷新
 node test-skill-evolver.mjs     # 33：学习/查重/增量/泛化门槛/限流/异常
 node test-skill-loader.mjs      # 42：清单注入/点名/限流/清理/无 keywords
+node test-skill-provider.mjs    # 52：runtime skill 注册/frontmatter 解析/容错
 ```
 
 ## 二、覆盖率（c8，全维度 100% 目标）

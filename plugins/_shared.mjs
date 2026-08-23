@@ -46,42 +46,124 @@ export function extractText(result, limit = 300) {
 // ── 工具调用指纹 ──────────────────────────────────────────────────────
 
 /**
- * 计算一次工具调用的"指纹"——归一化后的身份，用于识别"完全相同的重试"。
- * shell 类命令去掉 cd 前缀 / env 设置 / 管道尾部装饰 / 重定向 / 2>&1 /
- * Select-Object 行数 / Select-String 过滤器（P0-3 加强模糊化），
- * 让"同一命令微调装饰层"也落入同一指纹；edit 用文件路径 + old_string 摘要。
+ * 固定多点取样摘要：长参数不再"截前 N 字符"（前缀截断会让 limit 之后的
+ * 差异全部丢失，不同长参数被误判为同一指纹），而是在整串上按固定分布取
+ * 若干样本窗口（首、中、尾全覆盖），并附总长度 + 全长 FNV-1a 哈希：
+ *  - 样本窗口：任意位置的差异都能反映进指纹（尤其尾部差异必被捕获）；
+ *  - 全长哈希：样本窗口未覆盖区域的差异也以 32 位哈希参与区分（满足分布）。
+ * 串长 ≤ limit 时原样返回（保持旧行为，短参数指纹可读）。
  */
-export function fingerprint(exec, { limit = 300 } = {}) {
-  const name = exec.name || '?'
-  const args = exec.arguments || {}
-  let sig = ''
+export function sampleDigest(s, { limit = 300, points = 8, window = 24 } = {}) {
+  const str = String(s)
+  if (str.length <= limit) return str
+  const last = str.length - window
+  const parts = []
+  for (let i = 0; i < points; i++) {
+    const pos = Math.min(last, Math.floor((i * last) / (points - 1)))
+    parts.push(str.slice(pos, pos + window))
+  }
+  // FNV-1a 32 位：覆盖样本窗口之间的全部区域
+  let hash = 0x811c9dc5
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return `#${str.length}#${parts.join('|')}#${hash.toString(16).padStart(8, '0')}`
+}
+
+/**
+ * 参数的确定性序列化：键排序 + 递归 + 循环引用/深对象防护。
+ * 同一组参数无论键序如何都得到同一串；不同参数得到不同串。
+ * `description` 是展示元数据而非执行参数，排除以免"同命令换描述"逃过重复检测。
+ */
+const OMIT_KEYS = new Set(['description'])
+
+function canonicalValue(v, seen, depth = 0) {
+  if (v === null) return 'null'
+  const t = typeof v
+  if (t === 'string') return JSON.stringify(v)
+  if (t === 'number' || t === 'boolean' || t === 'bigint') return String(v)
+  if (t === 'undefined') return 'undefined'
+  if (t === 'function') return `[fn:${v.name || 'anon'}]`
+  if (t === 'symbol') return `[sym:${String(v)}]`
+  if (depth > 8) return '[Deep]'
+  if (seen.has(v)) return '[Circular]'
+  seen.add(v)
+  let out
   try {
-    if (typeof args.command === 'string') {
-      sig = args.command
-        .replace(/^cd\s+[^;]+;\s*/, '')                    // 去 cd 前缀
-        .replace(/\$env:[A-Z_]+(\s*=\s*'[^']*'|\s*=\s*"[^"]*")?;\s*/g, '') // 去 env 设置
-        .replace(/\s*2>&1\s*/g, ' ')                        // 去 2>&1
-        .replace(/\s*\*\s*>\s*[^;]+/g, ' ')                 // 去 *> 重定向到文件
-        .replace(/\s*\|\s*Select-Object\s+-Last\s+\d+/g, '') // 去 | Select-Object -Last N
-        .replace(/\s*\|\s*Select-Object\s+-First\s+\d+/g, '') // 去 | Select-Object -First N
-        .replace(/\s*\|\s*Select-String\s+[^|]*$/g, '')     // 去尾部 | Select-String ...
-        .replace(/\s*\|\s*Select-Object\s+[^|]*$/g, '')     // 去尾部 | Select-Object ...
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, limit)
-    } else if (typeof args.file_path === 'string' || typeof args.path === 'string') {
-      const fp = args.file_path || args.path || ''
-      if (name === 'edit') {
-        const oldStr = String(args.old_string || '').slice(0, 80)
-        sig = `${fp}::${oldStr}`
-      } else {
-        sig = fp
-      }
+    if (Array.isArray(v)) {
+      out = '[' + v.map(x => canonicalValue(x, seen, depth + 1)).join(',') + ']'
+    } else if (v instanceof Date) {
+      out = JSON.stringify(v.toISOString())
     } else {
-      sig = JSON.stringify(args).slice(0, limit)
+      const keys = Object.keys(v).filter(k => !OMIT_KEYS.has(k)).sort()
+      out = '{' + keys.map(k => {
+        let val
+        try { val = canonicalValue(v[k], seen, depth + 1) } catch { val = '[Getter]' }
+        return JSON.stringify(k) + ':' + val
+      }).join(',') + '}'
     }
   } catch {
-    sig = String(args).slice(0, limit)
+    out = '[Unserializable]'
+  }
+  seen.delete(v)
+  return out
+}
+
+/**
+ * shell 命令归一化：去掉 cd 前缀 / env 设置 / 管道尾部装饰 / 重定向 / 2>&1 /
+ * Select-Object 行数 / Select-String 过滤器（P0-3 加强模糊化），
+ * 让"同一命令微调装饰层"仍落入同一指纹。
+ */
+function normalizeCommand(command) {
+  return String(command)
+    .replace(/^cd\s+[^;]+;\s*/, '')                    // 去 cd 前缀
+    .replace(/\$env:[A-Z_]+(\s*=\s*'[^']*'|\s*=\s*"[^"]*")?;\s*/g, '') // 去 env 设置
+    .replace(/\s*2>&1\s*/g, ' ')                        // 去 2>&1
+    .replace(/\s*\*\s*>\s*[^;]+/g, ' ')                 // 去 *> 重定向到文件
+    .replace(/\s*\|\s*Select-Object\s+-Last\s+\d+/g, '') // 去 | Select-Object -Last N
+    .replace(/\s*\|\s*Select-Object\s+-First\s+\d+/g, '') // 去 | Select-Object -First N
+    .replace(/\s*\|\s*Select-String\s+[^|]*$/g, '')     // 去尾部 | Select-String ...
+    .replace(/\s*\|\s*Select-Object\s+[^|]*$/g, '')     // 去尾部 | Select-Object ...
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/**
+ * 计算一次工具调用的"指纹"——归一化后的身份，用于识别"完全相同的重试"。
+ *
+ * 2026-08-24 修复（分段 Read 误杀）：
+ *  - 旧实现只取 file_path / 只取 command 前缀，忽略其余参数 → 不同 offset/limit
+ *    的 Read、长命令 limit 之后的差异全部撞同一指纹 → 误 deny。
+ *  - 现在：覆盖工具调用的全部参数（键排序确定性序列化，description 除外），
+ *    长参数用固定多点取样摘要（sampleDigest）而非前缀截断。
+ */
+export function fingerprint(exec, { limit = 300, points = 8, window = 24 } = {}) {
+  const name = exec?.name || '?'
+  const args = exec?.arguments
+  let sig = ''
+  try {
+    if (args && typeof args === 'object') {
+      if (typeof args.command === 'string') {
+        // 命令类工具：command 归一化后取样；其余参数（workdir/timeout_ms 等）一并纳入
+        const rest = {}
+        for (const k of Object.keys(args)) {
+          if (k !== 'command' && !OMIT_KEYS.has(k)) rest[k] = args[k]
+        }
+        const restSig = sampleDigest(canonicalValue(rest, new WeakSet()), { limit, points, window })
+        const cmdSig = sampleDigest(normalizeCommand(args.command), { limit, points, window })
+        sig = restSig === '{}' ? cmdSig : `${cmdSig}|${restSig}`
+      } else {
+        // 文件/通用工具：全部参数参与（read 的 offset/limit、write 的 content、
+        // edit 的 old_string/new_string 都不再被忽略）
+        sig = sampleDigest(canonicalValue(args, new WeakSet()), { limit, points, window })
+      }
+    } else {
+      // 无参数 / 非对象参数 → 序列化兜底（无参数时 '{}'，与旧行为一致）
+      sig = sampleDigest(canonicalValue(args ?? {}, new WeakSet()), { limit, points, window })
+    }
+  } catch {
+    sig = sampleDigest(String(args ?? ''), { limit, points, window })
   }
   return `${name}::${sig}`
 }

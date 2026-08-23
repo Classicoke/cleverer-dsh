@@ -61,6 +61,7 @@ function assert(cond, label) {
 
 // ── 导入插件 ──────────────────────────────────────────────────────────────
 const mod = await import(pathToFileURL('plugins/anti-stuck.mjs').href)
+const shared = await import(pathToFileURL('plugins/_shared.mjs').href)
 
 // =========================================================================
 console.log('\n=== 测试 1: 连续失败 → 拒绝相同重试 ===')
@@ -581,6 +582,85 @@ const evilResult = { isError: false, value: evilValue }
 await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: 'evilvalue' }, agent: agent20f }, evilResult)
 assert(true, 'isFailure catch 路径执行')
 assert(true, '分支穷举场景全部执行')
+
+
+// =========================================================================
+console.log('\n=== 测试 21: 指纹修复回归（分段 Read / 全参数覆盖 / 长参数多点取样） ===')
+// —— 场景 A：分段读取大文件（每次 offset/limit 不同）不得被误判为同一指纹 ——
+ctx = makeCtx()
+mod.apply(ctx, {})
+const agentR = fakeAgent('agent-read-seg')
+// 同一文件 offset=0 失败 2 次 → 完全相同参数的第三次仍应 deny（重复检测保留）
+await ctx.emit('tools/result', { name: 'read', arguments: { file_path: 'big.log', offset: 0, limit: 1000 }, agent: agentR },
+  { isError: true, content: [{ type: 'text', text: 'boom' }] })
+await ctx.emit('tools/result', { name: 'read', arguments: { file_path: 'big.log', offset: 0, limit: 1000 }, agent: agentR },
+  { isError: true, content: [{ type: 'text', text: 'boom' }] })
+const dSame = await ctx.emit('tools/pre-execute',
+  { name: 'read', arguments: { file_path: 'big.log', offset: 0, limit: 1000 }, agent: agentR })
+assert(dSame.kind === 'deny', `相同 offset/limit 的 read 仍被 deny (got ${dSame.kind})`)
+// 不同 offset 失败 → 指纹不同，第三次换 offset 不得被 deny（Bug 修复点）
+await ctx.emit('tools/result', { name: 'read', arguments: { file_path: 'big.log', offset: 1000, limit: 1000 }, agent: agentR },
+  { isError: true, content: [{ type: 'text', text: 'boom' }] })
+const dDiffOffset = await ctx.emit('tools/pre-execute',
+  { name: 'read', arguments: { file_path: 'big.log', offset: 2000, limit: 1000 }, agent: agentR })
+assert(dDiffOffset.kind !== 'deny', `不同 offset 的分段 read 不被误杀 (got ${dDiffOffset.kind})`)
+// limit 不同同样不同指纹
+await ctx.emit('tools/result', { name: 'read', arguments: { file_path: 'big.log', offset: 2000, limit: 500 }, agent: agentR },
+  { isError: true, content: [{ type: 'text', text: 'boom' }] })
+const dDiffLimit = await ctx.emit('tools/pre-execute',
+  { name: 'read', arguments: { file_path: 'big.log', offset: 2000, limit: 1000 }, agent: agentR })
+assert(dDiffLimit.kind !== 'deny', `不同 limit 的 read 不被误杀 (got ${dDiffLimit.kind})`)
+
+// —— 场景 B：命令工具其余参数（workdir 等）纳入指纹 ——
+const fpCmdA = shared.fingerprint({ name: 'pwsh', arguments: { command: 'npm run build', workdir: 'a' } })
+const fpCmdB = shared.fingerprint({ name: 'pwsh', arguments: { command: 'npm run build', workdir: 'b' } })
+assert(fpCmdA !== fpCmdB, `同命令不同 workdir → 不同指纹`)
+// description 是展示元数据 → 不参与指纹（同命令换描述仍算同一重试）
+const fpNoDesc = shared.fingerprint({ name: 'bash', arguments: { command: 'make' } })
+const fpDesc = shared.fingerprint({ name: 'bash', arguments: { command: 'make', description: '换个描述' } })
+assert(fpNoDesc === fpDesc, `description 不参与指纹`)
+// 键序不同 → 同一指纹（确定性序列化）
+const fpOrderA = shared.fingerprint({ name: 'bash', arguments: { command: 'make', workdir: 'x' } })
+const fpOrderB = shared.fingerprint({ name: 'bash', arguments: { workdir: 'x', command: 'make' } })
+assert(fpOrderA === fpOrderB, '键序不同 → 同一指纹')
+
+// —— 场景 C：长参数不前缀截断，limit 之后的差异进入指纹 ——
+const longA = 'x'.repeat(400) + 'TAIL-A'
+const longB = 'x'.repeat(400) + 'TAIL-B'
+assert(longA.slice(0, 300) === longB.slice(0, 300), '前置条件：前 300 字符相同')
+const fpLongA = shared.fingerprint({ name: 'bash', arguments: { command: longA } })
+const fpLongB = shared.fingerprint({ name: 'bash', arguments: { command: longB } })
+assert(fpLongA !== fpLongB, '长命令前缀相同尾部不同 → 不同指纹')
+assert(fpLongA === shared.fingerprint({ name: 'bash', arguments: { command: longA } }), '同一长命令 → 同一指纹')
+// 长命令中部差异（不在样本窗口、仅全长哈希覆盖）也区分
+const midA = 'x'.repeat(200) + 'MID-A' + 'y'.repeat(200)
+const midB = 'x'.repeat(200) + 'MID-B' + 'y'.repeat(200)
+assert(shared.fingerprint({ name: 'bash', arguments: { command: midA } }) !==
+  shared.fingerprint({ name: 'bash', arguments: { command: midB } }), '长命令中部差异 → 不同指纹')
+
+// —— 场景 D：edit/write 的其余参数纳入指纹 ——
+const editA = shared.fingerprint({ name: 'edit', arguments: { file_path: 'a.mjs', old_string: 'x', new_string: 'y' } })
+const editB = shared.fingerprint({ name: 'edit', arguments: { file_path: 'a.mjs', old_string: 'x', new_string: 'z' } })
+assert(editA !== editB, 'edit 同路径同 old_string 不同 new_string → 不同指纹')
+const writeA = shared.fingerprint({ name: 'write', arguments: { file_path: 'a.mjs', content: 'AAA' } })
+const writeB = shared.fingerprint({ name: 'write', arguments: { file_path: 'a.mjs', content: 'BBB' } })
+assert(writeA !== writeB, 'write 同路径不同 content → 不同指纹')
+// edit 长 old_string：300 之后的差异进入指纹（旧实现只截前 80 字符）
+const oldLongA = 'o'.repeat(500) + '-A'
+const oldLongB = 'o'.repeat(500) + '-B'
+assert(shared.fingerprint({ name: 'edit', arguments: { file_path: 'a.mjs', old_string: oldLongA } }) !==
+  shared.fingerprint({ name: 'edit', arguments: { file_path: 'a.mjs', old_string: oldLongB } }), 'edit 长 old_string 尾部差异 → 不同指纹')
+
+// —— 场景 E：命令装饰层归一化仍生效 ——
+const plain = shared.fingerprint({ name: 'pwsh', arguments: { command: 'pnpm run build' } })
+const decorated = shared.fingerprint({ name: 'pwsh', arguments: { command: 'pnpm run build 2>&1 | Select-Object -Last 1' } })
+assert(plain === decorated, '命令装饰层归一化保留')
+
+// —— 场景 F：sampleDigest 边界 ——
+assert(shared.sampleDigest('short') === 'short', 'sampleDigest 短串原样返回')
+const dg = shared.sampleDigest('z'.repeat(400))
+assert(dg.startsWith('#400#') && /#[0-9a-f]{8}$/.test(dg), `sampleDigest 长串含长度/样本/哈希 (${dg.slice(0, 40)}…)`)
+assert(shared.sampleDigest('z'.repeat(400)) === dg, 'sampleDigest 确定性')
 
 // =========================================================================
 console.log(`\n结果: ${passed} 通过, ${failed} 失败`)
