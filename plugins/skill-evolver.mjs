@@ -246,9 +246,9 @@ export function apply(ctx, config = {}) {
 
   const skillsDir = resolveSkillsDir(cfg)
 
-  // agentId -> Map<fp, {fails, lastError, solvedAt, solution}>
+  // agentId -> Map<fp, {fails, lastError, lastAt, solvedAt, solution}>
   const track = new Map()
-  // agentId -> 已沉淀经验指纹集合（跨 turn 记忆，防重复学习）
+  // agentId -> Map<dedupKey, learnedAt>（跨 turn 记忆，防重复学习）
   const learned = new Map()
   // agentId -> turn 内待沉淀队列
   const pending = new Map()
@@ -265,7 +265,7 @@ export function apply(ctx, config = {}) {
   }
   function learnedFor(agentId) {
     let s = learned.get(agentId)
-    if (!s) { s = new Set(); learned.set(agentId, s) }
+    if (!s) { s = new Map(); learned.set(agentId, s) }
     return s
   }
 
@@ -277,9 +277,10 @@ export function apply(ctx, config = {}) {
     const t = trackFor(agentId)
 
     if (isFailure(result)) {
-      const rec = t.get(fp) || { fails: 0, lastError: '', solvedAt: 0, solution: '' }
+      const rec = t.get(fp) || { fails: 0, lastError: '', lastAt: 0, solvedAt: 0, solution: '' }
       rec.fails += 1
       rec.lastError = extractText(result) || rec.lastError
+      rec.lastAt = Date.now()
       t.set(fp, rec)
     } else {
       // 成功：收割"尚未解决"的失败指纹——解法 = 当前成功的命令
@@ -320,10 +321,20 @@ export function apply(ctx, config = {}) {
     pending.set(agentId, [])
 
     const learnedSet = learnedFor(agentId)
+    // O4 契约：hub 的 __errLog 存在时，只沉淀被 env-triage 打了 rootCause
+    // 标记的卡点记录（无根因不沉淀，防垃圾 skill——与 ARCHITECTURE O4 一致）
+    const hasErrLog = Array.isArray(ctx.__errLog)
     for (const rec of q) {
       if (rec.solvedAt === 0) continue
       const dedupKey = rec.solution.slice(0, 80)
       if (learnedSet.has(dedupKey)) continue
+      if (hasErrLog) {
+        const marked = ctx.__errLog.some(r => r.fp === rec.failFp && r.rootCause)
+        if (!marked) {
+          ctx.logger?.info?.(`skill-evolver: skipped lesson "${shortTitle(rec.failFp || rec.solution)}" (no root-cause in errLog)`)
+          continue
+        }
+      }
       const lesson = {
         // 卡点为主标题（同卡点合并），解法为增量
         title: shortTitle(rec.failFp || rec.solution),
@@ -336,7 +347,7 @@ export function apply(ctx, config = {}) {
         if (outcome.action === 'rejected') {
           ctx.logger?.warn?.(`skill-evolver: rejected low-quality lesson "${lesson.title}" (${outcome.reason})`)
         } else if (outcome.action !== 'skipped') {
-          learnedSet.add(dedupKey)
+          learnedSet.set(dedupKey, Date.now())
           ctx.logger?.info?.(`skill-evolver: ${outcome.action} skill for "${lesson.title}"${outcome.file ? ` -> ${outcome.file}` : ''}${outcome.score !== undefined ? ` (similarity ${outcome.score.toFixed(2)})` : ''}`)
         } else {
           ctx.logger?.info?.(`skill-evolver: skipped duplicate lesson "${lesson.title}"`)
@@ -350,8 +361,20 @@ export function apply(ctx, config = {}) {
   // 3. 状态清理
   ctx.effect(() => makeCleanupTimer((cutoff) => {
     for (const [agentId, m] of track) {
-      const last = Math.max(...[...m.values()].map(v => v.solvedAt || v.fails ? Date.now() : 0), 0)
+      // 修复：原 `v.solvedAt || v.fails ? Date.now() : 0` 因运算符优先级恒为
+      // Date.now()，track 永不清理（内存泄漏）。改用记录上的 lastAt 时间戳。
+      const last = Math.max(...[...m.values()].map(v => (v.solvedAt || v.lastAt || 0)), 0)
       if (last < cutoff) track.delete(agentId)
+    }
+    for (const [agentId, q] of pending) {
+      const last = q.length === 0 ? 0 : Math.max(...q.map(r => (r.solvedAt || r.lastAt || 0)))
+      if (last < cutoff) pending.delete(agentId)
+    }
+    for (const [agentId, s] of learned) {
+      for (const [k, at] of s) {
+        if (at < cutoff) s.delete(k)
+      }
+      if (s.size === 0) learned.delete(agentId)
     }
   }), 'skill-evolver: state cleanup')
 }

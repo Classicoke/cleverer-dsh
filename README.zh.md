@@ -14,7 +14,7 @@
 | 🧠 | **执行纪律**：失败自动拦截、强制反思、任务规划提醒、记忆自动去重、经验自动沉淀成技能 |
 | 🛠️ | **开箱即用工具**：秒级找文件 + 9 项环境体检，遇到问题不再靠猜 |
 | 📦 | **一条命令安装/卸载**（走 DSH 自带插件管理器） |
-| 🧪 | **478 项单元测试全绿**，语句/行覆盖率 100%；纯代码、零依赖，不碰 DSH 本体 |
+| 🧪 | **519 项单元测试全绿**；语句覆盖率 99.35%（c8，plugins+scripts；逐文件基线见 docs/TESTING.md）；纯代码、零依赖，不碰 DSH 本体 |
 | 📚 | **6 个内置技能**：错误处理六步法、错误速查表、快速找文件、根因排查、本地优先、先计划再执行 |
 
 ---
@@ -43,7 +43,7 @@ DSH 功能齐全，但**不够聪明**：系统提示词是空的、失败了会
 
 | 层 | 作用 |
 |---|---|
-| **纪律层**（8 个插件） | 失败拦截、强制反思、任务规划、记忆去重 |
+| **纪律层**（9 个插件） | 失败拦截、强制反思、任务规划、记忆去重、运行时技能注册 |
 | **协作中枢**（discipline-hub） | 统一失败记录 + 提醒限流——插件不打架、问题可追溯 |
 | **工具层**（2 个插件） | 秒级找文件、环境体检 |
 | **技能层**（6 个技能） | 按需自动加载——出错知道怎么办、找东西快 |
@@ -106,12 +106,14 @@ cordis.patch.yml（主配置）
 | 插件协同 | 各插件独立工作 | **更强**——纪律插件共享统一的失败记录与提醒通道，作为一个整体配合 |
 
 > 💡 **为什么子板是更好的方案**：这些插件不是各干各的——一个定位根因、一个沉淀经验、一个提醒你先列计划。子板把这种协作变成**结构保证**（插件天然属于同一组、共享同一套设施），而不是靠运气；纪律组和工具组物理分离、边界清楚，以后想加自己的插件也知道放哪；插件按组整体启停，升级排查更省心。
+>
+> ℹ️ **为什么方式二没有 dsh-skill-provider**：方式一把插件装进 `node_modules`，DSH 默认加载器看不见包内的 6 个技能，`dsh-skill-provider` 负责运行时注册；方式二把技能直接复制到 `~/.dsh/skills`，DSH 原生加载器本就能读到，所以不需要这个注册插件。
 
 ### 方式一：DSH 插件管理器安装（官方方式）
 
 ```bash
-dsh plugin --profile web add github:Classicoke/cleverer-dsh
-# headless 用户：  dsh plugin --profile headless add github:Classicoke/cleverer-dsh
+dsh plugin --profile web add github:sunwayking/cleverer-dsh
+# headless 用户：  dsh plugin --profile headless add github:sunwayking/cleverer-dsh
 ```
 
 无需构建——命令跑完插件和技能直接可用。卸载：
@@ -125,11 +127,13 @@ dsh plugin --profile web remove cleverer-dsh
 在 PowerShell 里粘贴这一行（自动下载发布包 → 解压 → 安装 → 清理临时文件）：
 
 ```powershell
-$u = 'https://github.com/Classicoke/cleverer-dsh/archive/refs/tags/v1.2.zip'
+# 默认分支为 master（GitHub archive 目录名 = cleverer-dsh-master）；
+# 发布 v1.2.0 tag 后可改用 refs/tags/v1.2.0.zip（目录名 cleverer-dsh-1.2.0）
+$u = 'https://github.com/sunwayking/cleverer-dsh/archive/refs/heads/master.zip'
 $z = "$env:TEMP\cleverer-dsh.zip"; $d = "$env:TEMP\cleverer-dsh-install"
 Invoke-WebRequest $u -OutFile $z
 Expand-Archive $z $d -Force
-pwsh -File "$d\cleverer-dsh-1.2\install.ps1"
+pwsh -File "$d\cleverer-dsh-master\install.ps1"
 Remove-Item $z, $d -Recurse -Force
 ```
 
@@ -138,12 +142,18 @@ Remove-Item $z, $d -Recurse -Force
 #### 方式二卸载
 
 ```powershell
-# 1. 还原安装时自动备份的配置（安装前没有 cordis.patch.yml 的，备份是空 []，还原=回到安装前状态）
-$dshHome = Join-Path $HOME '.dsh'
+# 1. 还原安装时自动备份的配置（安装前没有 cordis.patch.yml 的，备份是空 []，还原=回到安装前状态）。
+#    与安装脚本一致使用 $env:USERPROFILE（$HOME 在部分环境可能指向别处）。
+#    取【最早】的备份 = 首次安装前的原始状态（多次安装时最新备份仍含挂载行）。
+$dshHome = Join-Path $env:USERPROFILE '.dsh'
 if (-not (Test-Path $dshHome)) { Write-Host "未找到 $dshHome，已中止"; exit 1 }
 $bak = Get-ChildItem "$dshHome\cordis.patch.yml.bak-cleverer-*" |
-       Sort-Object LastWriteTime -Descending | Select-Object -First 1
-if ($bak) { Copy-Item $bak.FullName "$dshHome\cordis.patch.yml" -Force }
+       Sort-Object LastWriteTime | Select-Object -First 1
+if ($bak) {
+    # 先把当前 patch 另存，防止还原时抹掉你安装后自行添加的行
+    Copy-Item "$dshHome\cordis.patch.yml" "$dshHome\cordis.patch.yml.pre-restore-$(Get-Date -Format 'yyyyMMdd-HHmmssfff')" -ErrorAction SilentlyContinue
+    Copy-Item $bak.FullName "$dshHome\cordis.patch.yml" -Force
+}
 
 # 2. 只删除 cleverer-dsh 安装的文件（精确清单——你自己装的插件/技能在同一目录也不会被误删）
 $plugins = @('_shared','anti-stuck','discipline-hub','dsh-cordis-discipline','dsh-discipline',
@@ -158,7 +168,7 @@ Remove-Item "$dshHome\scripts\dsh-env-check.mjs" -ErrorAction SilentlyContinue
 # 3. 重启 DSH
 ```
 
-所有删除都限定在 `$HOME\.dsh`（你自己的用户目录，绝不可能是系统路径），且只碰上面列出的文件。
+所有删除都限定在 `$env:USERPROFILE\.dsh`（你自己的用户目录，绝不可能是系统路径），且只碰上面列出的文件。`.bak-cleverer-*` 备份文件有意保留，作为回滚证据。
 
 ---
 
@@ -173,6 +183,7 @@ Remove-Item "$dshHome\scripts\dsh-env-check.mjs" -ErrorAction SilentlyContinue
 | `skill-evolver` | 沉淀垃圾技能 | 存技能前过"泛化门槛"，路径名/临时内容直接拒收 |
 | `dsh-discipline` | 系统提示词是空的 | 每轮注入 11 条执行纪律 |
 | `dsh-skill-loader` | 技能装了从来不用 | 任务开头提醒可用技能 + 关键词点名 |
+| `dsh-skill-provider` | 包安装时内置技能不可见 | 运行时注册 6 个内置技能（仅方式一需要） |
 | `dsh-cordis-discipline` | 动态插件乱装乱卸 | 前置检查（没定义不许运行、没停止不许卸载） |
 | `discipline-hub` | 插件各管各的、提醒刷屏 | 统一记录失败 + 提醒限流 |
 | `dsh-fast-locate` | 找文件慢 | 一条命令并行扫描多个目录 |

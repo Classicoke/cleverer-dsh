@@ -48,7 +48,8 @@ else { Warn "cordis.patch.yml 不存在——将新建（仅含 cleverer-dsh 的
 # DSH patch 语法顶层数组，卸载还原=回到安装前状态，安装/卸载协议对称；
 # 不能写空文件——loadOptionalPatches 要求顶层是 YAML 数组，空文件会 boot 报错）
 Step "1. 备份"
-$bak = "$patchFile.bak-cleverer-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+# 毫秒级时间戳（修复：旧格式只到秒，同秒内二次安装会覆盖首次备份）
+$bak = "$patchFile.bak-cleverer-$(Get-Date -Format 'yyyyMMdd-HHmmssfff')"
 if (-not $DryRun) {
     if ($patchExists) { Copy-Item $patchFile $bak }
     else { Set-Content $bak '[]' -Encoding UTF8 }
@@ -58,14 +59,14 @@ if (-not $DryRun) {
 }
 
 # ── 2. 复制插件 ────────────────────────────────────────────────────────
-Step "2. 安装插件 (12 个文件: 11 插件 + _shared.mjs 公共模块)"
+Step "2. 安装插件 (13 个文件: 12 插件 + _shared.mjs 公共模块)"
 New-Item $pluginDir -ItemType Directory -Force | Out-Null
 $pluginCount = 0
 foreach ($f in (Get-ChildItem (Join-Path $projRoot 'plugins') -Filter '*.mjs')) {
     if ($DryRun) { Warn "[DryRun] 将安装 $($f.Name)" }
     else { Copy-Item $f.FullName (Join-Path $pluginDir $f.Name) -Force; $pluginCount++ }
 }
-if ($DryRun) { Warn "[DryRun] 预览 12 个文件（_shared.mjs 是相对导入依赖，必须随插件全量复制）" } else { Ok "安装 $pluginCount 个文件" }
+if ($DryRun) { Warn "[DryRun] 预览 13 个文件（_shared.mjs 是相对导入依赖，必须随插件全量复制）" } else { Ok "安装 $pluginCount 个文件" }
 
 # ── 2.5 复制 env-check 脚本（env_check 工具的单一事实源）─────────────
 Step "2.5 安装 env-check 脚本"

@@ -257,8 +257,9 @@ console.log('\n=== 测试 16: effect 清理函数可调用（clearInterval） ==
 const ctx16 = makeCtx()
 mod.apply(ctx16, {})
 assert(ctx16._cleanups.length === 1, `注册 1 个 effect (got ${ctx16._cleanups.length})`)
-ctx16._cleanups[0]() // 不抛错即通过
-assert(true, 'cleanup 调用成功')
+let threw16 = false
+try { ctx16._cleanups[0]() } catch { threw16 = true }
+assert(!threw16, 'cleanup 调用成功')
 
 // =========================================================================
 console.log('\n=== 测试 18: decision.messages 为 undefined → || [] 兜底不崩 ===')

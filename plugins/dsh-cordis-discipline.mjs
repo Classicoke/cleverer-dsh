@@ -103,10 +103,11 @@ export function apply(ctx, config = {}) {
       }
       case 'cordis_run': {
         const id = extractIds(exec)[0] || args.packageId || '?'
-        // 必须本会话 define 过
-        const defined = s.defined.size > 0 || (s.pendingDefine && s.pendingDefine.size > 0)
-        if (!defined) {
-          return { kind: 'deny', reason: `[cordis-discipline] cordis_run 前必须先 cordis_define（本会话内）。当前会话没有已定义的动态插件，无法运行 ${id}。流程：define → run → stop。` }
+        // 必须本会话 define 过【目标】插件——修复前只查"define 过任意插件"，
+        // define A 后 run B 也能通过，纪律形同虚设
+        const known = s.defined.has(id) || (s.pendingDefine && s.pendingDefine.has(id))
+        if (!known) {
+          return { kind: 'deny', reason: `[cordis-discipline] cordis_run 前必须先 cordis_define 目标插件（本会话内）。"${id}" 尚未 define，无法运行。流程：define → run → stop。` }
         }
         s.running.add(id)
         ctx.logger?.info?.(`dsh-cordis-discipline: run ${id} (agent ${agentId})`)

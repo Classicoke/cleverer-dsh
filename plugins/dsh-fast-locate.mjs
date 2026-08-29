@@ -103,6 +103,10 @@ async function scanRoot(root, matcher, cfg) {
         const rel = full.slice(root.length + 1).replace(/\\/g, '/')
         let statLike = { size: 0, mtimeMs: 0 }
         if (d.isFile()) {
+          // 文件计入访问上限，且超限即截断本层循环——修复"只计数不拦截"：
+          // 单个巨型扁平目录仍会对全部文件逐个 stat，上限形同虚设
+          if (visited >= cfg.maxVisited) { truncated = true; break }
+          visited++
           try {
             // 只有文件需要 stat 拿 size/mtime；目录不 stat（省开销）
             const st = await stat(full)

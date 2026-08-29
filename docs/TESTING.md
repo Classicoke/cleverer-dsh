@@ -1,23 +1,24 @@
 # 测试方法论
 
-## 一、单元测试（426 项，每次改动后跑）
+## 一、单元测试（519 项，每次改动后跑）
 
 ```powershell
 pwsh -File tests/run-all.ps1
 # 或逐个：
 cd tests
-node test-anti-stuck.mjs        # 41：deny/成功清零/指纹归一化/注入/steer 去重/边界
-node test-cordis-discipline.mjs # 44：define/run/stop/undefine 生命周期/result 确认/steer
-node test-discipline-hub.mjs    # 35：errLog 聚合/仲裁限流/错误分类/容量/清理
+node test-anti-stuck.mjs        # 69：deny/成功清零/指纹归一化/注入/steer 去重/边界/分段Read不误杀/长参数取样/P0 回归
+node test-cordis-discipline.mjs # 45：define/run/stop/undefine 生命周期/result 确认/按目标 id 校验/steer
+node test-discipline-hub.mjs    # 36：errLog 聚合/仲裁限流/错误分类/容量/清理/排序确定性
 node test-dsh-discipline.mjs    # 24：纪律段注册/text/order 覆盖/无 logger
-node test-dsh-memory.mjs        # 48：CRUD/查重/时间窗/force 分级/损坏文件/nudge
+node test-dsh-memory.mjs        # 53：CRUD/查重/时间窗/窗口过期/force 分级/损坏文件/nudge 按轮+清理/NaN 索引
 node test-env-check.mjs         # 61：9 项检查注册表全分支（registerHooks mock fs）
 node test-env-check-tool.mjs    # 15：工具注册/超时/混合输出/空白 item
-node test-env-triage.mjs        # 22：溯源卡/绕圈卡/turn 复盘/hub 仲裁/清理
-node test-fast-locate.mjs       # 32：并行扫描/glob/噪音跳过/截断/junction/stat 失败
-node test-plan-discipline.mjs   # 29：多步骤信号/todo 判定/限流/试错期刷新
-node test-skill-evolver.mjs     # 33：学习/查重/增量/泛化门槛/限流/异常
-node test-skill-loader.mjs      # 42：清单注入/点名/限流/清理/无 keywords
+node test-env-triage.mjs        # 25：溯源卡/绕圈卡/turn 复盘/hub 仲裁/方案分组/容量截断/清理
+node test-fast-locate.mjs       # 32：并行扫描/glob/噪音跳过/截断/junction/stat 失败/文件计数
+node test-plan-discipline.mjs   # 29：多步骤信号/todo 判定/每轮限流/试错期刷新
+node test-skill-evolver.mjs     # 36：学习/查重/增量/泛化门槛/限流/异常/O4 根因契约
+node test-skill-loader.mjs      # 42：清单注入/点名/每轮限流/清理/关键词
+node test-skill-provider.mjs    # 52：runtime skill 注册/frontmatter 解析/容错
 ```
 
 ## 二、覆盖率（c8，全维度 100% 目标）
@@ -31,20 +32,20 @@ foreach ($t in (Get-ChildItem tests\test-*.mjs)) {
 npx c8@10 report --reporter=text --no-clean --all --include="plugins/**/*.mjs" --include="scripts/**/*.mjs"
 ```
 
-**当前基线（2026-08-16，v1.2 重构后）**：全局语句 100% / 分支 96.74% / 函数 98.91% / 行 100%。
-**全维度 100%**：dsh-cordis-discipline、dsh-discipline、dsh-env-check-tool、dsh-env-check.mjs、dsh-plan-discipline、dsh-skill-loader、dsh-skill-loader。
-**公共模块 `plugins/_shared.mjs`**：语句/函数/行 100%（仅 extractText 的 joined 空兜底分支未覆盖——行为可达但测试未造"content 全空数组"场景）。
-其余文件的未覆盖项**全部为已确认的死分支/死代码/不可安全测试项**（防御性 `|| ''`、恒真条件、c8 三元统计盲区、会污染真实用户目录的路径）：
+**当前基线（P0 修复后，519 项，实测 c8@10）**：全局语句 **99.35%** / 分支 **95.59%** / 函数 **98.97%** / 行 99.35%（plugins+scripts 合并测量）。
+**全维度 100%**：dsh-cordis-discipline、dsh-discipline、dsh-env-check-tool、dsh-env-check.mjs、dsh-plan-discipline、dsh-skill-loader。
+其余未覆盖项（多为防御/兜底分支，逐行性质可用 analyze-cov.py 输出核对）：
 
-| 文件 | 未覆盖 | 性质 |
+| 文件 | 未覆盖行 | 备注 |
 |---|---|---|
-| _shared.mjs | 28（extractText joined 空兜底） | 行为可达但测试未造该场景 |
-| anti-stuck | 64（`result \|\| ''` 的 `''`） | 死分支 |
-| discipline-hub | 102/145（三元/`\|\|` c8 统计盲区，行为断言已证明走） | 统计盲区 |
-| env-triage | 154（topCls 恒非空） | 死分支 |
-| fast-locate | 84（被层尾检查逻辑上抢先） | 逻辑死分支 |
-| dsh-memory | 51 homedir 兜底（会写真实 ~/.dsh）、105/145/337/392 | 不可测/死分支 |
-| skill-evolver | 54/61/63/72/86/91/96/98/122/176-177/209/282/324/329/340/353-354（死分支 + c8 盲区，行为断言已证明） | 死分支/盲区 |
+| _shared.mjs | 105,115-116,174-175 | 序列化/分类的防御 catch 分支 |
+| anti-stuck.mjs | 64（分支） | `result \|\| ''` 的 `''` 分支（result 为真时永不走） |
+| discipline-hub.mjs | 105,148（分支） | 三元分支/清理时序 |
+| env-triage.mjs | 156（分支） | topCls 为空时的文本兜底 |
+| fast-locate.mjs | 84（分支） | visited 上限检查（被层尾检查逻辑上抢先） |
+| dsh-memory.mjs | 52,106,146,341,403,421（分支） | DSH_HOME/homedir 兜底与防御分支 |
+| dsh-skill-provider.mjs | 74-76,85-87 | 注册容错分支 |
+| skill-evolver.mjs | 370-372,374-378 | learn 异常兜底分支 |
 
 **新增测试的开发模式**（复用）：
 - cordis mock：`on` 收集 + `emit` 按 **waterfall 链式**实现（`callChain(i)`，链尾默认 enter）——短路版会让第二个 pre-step 钩子永远不执行
@@ -59,7 +60,7 @@ npx c8@10 report --reporter=text --no-clean --all --include="plugins/**/*.mjs" -
 
 ```powershell
 pwsh -File scripts/dsh-deploy.ps1 -ConfirmRestart
-# 同步 → node --check → env-check 三检查 → 重启 web → headless 复述纪律段 → PASS/FAIL
+# 同步 → node --check → env-check 三检查 → 重启 web → HTTP 存活探测 → headless 复述纪律段（装配正确性）→ PASS/FAIL
 ```
 
 ## 四、环境健康（随时可跑）
@@ -98,6 +99,8 @@ pwsh -File scripts/publish-audit.ps1      # 必须输出「审计通过 — 可�
 - 教训：**插件文件修改不热更新**——改完必须重启 DSH 进程；测前确认进程加载的是新版
 
 ## 八、覆盖率 100% 专项（2026-08-16，426 项达成）
+
+> 后续基线：v1.2 重构后 495 项；P0 修复后 519 项（见 §二 实测表）。
 
 - **触发**：用户要求"根据现有代码写覆盖率 100% 的单元测试，强制不能修改源代码"
 - **成果**：12 个测试文件 426 项全绿；全局语句 99.71%；6 个源文件全维度 100%；其余文件的未覆盖项全部是**死分支/死代码/不可安全测试**（见上表），**非测试遗漏**

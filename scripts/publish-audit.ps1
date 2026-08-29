@@ -1,14 +1,14 @@
 <#
   publish-audit.ps1 — 发布前个人信息审计（铁律的机器执行）
   铁律：GitHub 发布绝不携带真实个人信息（姓名/拼音邮箱/本机路径/ID/生日/单位）。
-  用法：pwsh -File scripts/publish-audit.ps1 [-Fix]
-  - Fix: 自动把命中的问题文件改中性（git 历史需手动 filter-branch，本脚本只报不自动改写）
-  扫描：仓库工作区文件 + git 历史作者/提交者 + 远程配置
+  用法：pwsh -File scripts/publish-audit.ps1
+  扫描：仓库工作区文件（含 .github/workflows 与 .gitignore）+ git 历史作者/提交者 + 远程配置
+  修复：本脚本只审计不自动改写——命中项按输出清单手动改中性
+        （git 历史用 filter-branch 改写，参考 README 发布节）。
 
   个人特征库：位于 scripts/audit-signatures.local.ps1（gitignored，不入库）——
   发布仓库本身不含任何个人特征，审计能力由本机本地文件提供。
 #>
-param([switch]$Fix)
 $ErrorActionPreference = 'Stop'
 $projRoot = Split-Path $PSScriptRoot -Parent
 Set-Location $projRoot
@@ -42,7 +42,9 @@ $exclude = @('scripts\publish-audit.ps1')    # 审计脚本自身含特征库，
 $issues = @()
 # ── 1. 工作区文件扫描 ─────────────────────────────────────────────────
 Write-Host "== 1. 工作区文件扫描 ==" -ForegroundColor Cyan
-$files = Get-ChildItem . -Recurse -File | Where-Object { $_.FullName -notmatch '\.git' }
+# 修复：旧规则 `-notmatch '\.git'` 会把 .github/workflows/** 与 .gitignore
+# （最易藏 PII 的文件）一并排除；现在只排除 .git 目录本身
+$files = Get-ChildItem . -Recurse -File | Where-Object { $_.FullName -notmatch '[\\/]\.git([\\/]|$)' }
 foreach ($f in $files) {
     $rel = $f.FullName.Replace("$projRoot\", '')
     if ($rel -in $exclude) { continue }    # 豁免审计脚本自身
@@ -83,8 +85,6 @@ if ($issues.Count -eq 0) {
 } else {
     Write-Host "🚫 审计发现 $($issues.Count) 处个人信息（发布前必须清零）:" -ForegroundColor Red
     $issues | Format-Table -AutoSize
-    if ($Fix) {
-        Write-Host "  ℹ️ 文件内问题请手动改为中性（'cleverer-dsh contributors'）；git 历史用 filter-branch 改写（参考 README 发布节）"
-    }
+    Write-Host "  ℹ️ 修复方式：文件内问题手动改为中性（'cleverer-dsh contributors'）；git 历史用 filter-branch 改写（参考 README 发布节）"
     exit 1
 }

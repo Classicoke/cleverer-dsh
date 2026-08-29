@@ -29,9 +29,9 @@ def main():
                 locs = meta.get('locations', [])
                 loc_desc = '; '.join(f"({l.get('start',{}).get('line')},{l.get('start',{}).get('column')})" for l in locs)
                 print(f"  branch id={bid} type={meta.get('type')} line={ln} counts={b} locations={loc_desc}")
-        # 语句明细
-        for sid, s in fdata.get('s', {}).items():
-            pass  # s 是 count map，无位置
+        # 语句明细：c8 的 s map 只有 count 无位置信息（loc 在 statementMap，
+        # 此处仅用 coverage-final.json 的 branchMap 定位未覆盖分支——
+        # 死循环 pass 已移除，不再伪装"语句分析"）
         # 函数
         for fid, fn in fdata.get('f', {}).items():
             loc = fn.get('loc', {})

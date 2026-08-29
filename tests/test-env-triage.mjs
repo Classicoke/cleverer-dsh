@@ -41,6 +41,7 @@ function assert(cond, label) {
 }
 
 const mod = await import(pathToFileURL('plugins/dsh-env-triage.mjs').href)
+const shared = await import(pathToFileURL('plugins/_shared.mjs').href)
 
 const fail = (tool, cmd, agent, cls = 'generic') => ({ name: tool, arguments: { command: cmd }, agent })
 
@@ -110,9 +111,9 @@ const ctx5 = makeCtx()
 mod.apply(ctx5, {})
 // 无 agent → 忽略
 await ctx5.emit('tools/result', { name: 'pwsh', arguments: { command: 'x' } }, { isError: true, content: [{ type: 'text', text: 'e' }] })
-// isError false + exit code 文本 → 判失败
+// 无信封 + exit code 文本 → 兜底判失败（P0 修复后：isError=false 不再扫文本）
 const agent5 = fakeAgent('t-5')
-await ctx5.emit('tools/result', fail('pwsh', 'exit1', agent5), { isError: false, content: [{ type: 'text', text: '[exit code: 1] boom' }] })
+await ctx5.emit('tools/result', fail('pwsh', 'exit1', agent5), { content: [{ type: 'text', text: '[exit code: 1] boom' }] })
 // isError false + 干净文本 → 忽略
 await ctx5.emit('tools/result', fail('pwsh', 'ok-cmd', agent5), { isError: false, content: [{ type: 'text', text: 'all good' }] })
 // content 数组含非对象元素 + 无 name/command（fp || 分支）
@@ -126,13 +127,17 @@ mod.apply(ctx5c, {})
 const agent5c = fakeAgent('t-5c')
 ctx5c.__errLog.push({ tool: 'pwsh', fp: 'x', errorClass: 'network', turn: 1, isFailure: true, text: 'weird internal failure 2 happened here' })
 await ctx5c.emit('tools/result', fail('pwsh', 'mystery2', agent5c), { isError: true, content: [{ type: 'text', text: 'weird internal failure 2' }] })
-// 容量 shift（13 次失败）
+// 容量 shift（13 次失败，跨 4 个不同方案域——同域命令 bigram 相似度会判为同一方案）
 const ctx5d = makeCtx()
 mod.apply(ctx5d, {})
 const agent5d = fakeAgent('t-5d')
+const domains5d = ['pnpm install', 'Remove-Item', 'git status', 'Set-Content']
 for (let i = 0; i < 13; i++) {
-  await ctx5d.emit('tools/result', fail('pwsh', `bulk-${i}`, agent5d), { isError: true, content: [{ type: 'text', text: 'e' }] })
+  await ctx5d.emit('tools/result', fail('pwsh', `${domains5d[i % 4]} item-${i}`, agent5d), { isError: true, content: [{ type: 'text', text: 'e' }] })
 }
+// 真实断言：容量截断后（保留 12 条）不同方案仍能触发绕圈卡
+const r5d = await ctx5d.emit('agent/pre-step', { agent: agent5d, turn: 1, signal: null })
+assert(JSON.stringify(r5d).includes('绕圈卡'), `容量截断后绕圈卡仍触发 (${JSON.stringify(r5d).slice(0, 60)})`)
 // 跨 turn 重置：turn=1 失败 → turn=2 失败
 const ctx5e = makeCtx()
 mod.apply(ctx5e, {})
@@ -140,7 +145,9 @@ const agent5e = fakeAgent('t-5e', 1)
 await ctx5e.emit('tools/result', fail('pwsh', 't1', agent5e), { isError: true, content: [{ type: 'text', text: 'e' }] })
 const agent5e2 = fakeAgent('t-5e', 2)
 await ctx5e.emit('tools/result', fail('pwsh', 't2', agent5e2), { isError: true, content: [{ type: 'text', text: 'e' }] })
-assert(true, '观察层边界路径全部执行')
+// 真实断言：turn 变化后 fails 重置且 warned 重置（修复后新 turn 卡可再次触发）
+const r5e = await ctx5e.emit('agent/pre-step', { agent: agent5e2, turn: 2, signal: null })
+assert(!JSON.stringify(r5e).includes('env-triage'), `跨 turn 重置后单次失败不触发卡 (${JSON.stringify(r5e).slice(0, 60)})`)
 
 // =========================================================================
 console.log('\n=== 测试 6: pre-step 边界（非 enter/无 agent/单方案/hub 仲裁/空指纹） ===')
@@ -162,6 +169,16 @@ for (let i = 0; i < 2; i++) {
 }
 const r6c = await ctx6c.emit('agent/pre-step', { agent: agent6c, turn: 1, signal: null })
 assert(!JSON.stringify(r6c).includes('env-triage'), `同方案失败不触发卡 (${JSON.stringify(r6c).slice(0, 60)})`)
+// 相似命令（bigram 相似度 ≥ 阈值）→ 判为同一方案，不触发卡（方案分组真实覆盖）
+const ctx6f = makeCtx()
+mod.apply(ctx6f, {})
+const agent6f = fakeAgent('t-6f')
+await ctx6f.emit('tools/result', fail('pwsh', 'pnpm install alpha', agent6f), { isError: true, content: [{ type: 'text', text: 'e1' }] })
+ctx6f.__errLog.push({ tool: 'pwsh', fp: 'pwsh::pnpm install alpha', errorClass: 'generic', turn: 1, isFailure: true })
+await ctx6f.emit('tools/result', fail('pwsh', 'pnpm install beta', agent6f), { isError: true, content: [{ type: 'text', text: 'e2' }] })
+ctx6f.__errLog.push({ tool: 'pwsh', fp: 'pwsh::pnpm install beta', errorClass: 'generic', turn: 1, isFailure: true })
+const r6f = await ctx6f.emit('agent/pre-step', { agent: agent6f, turn: 1, signal: null })
+assert(!JSON.stringify(r6f).includes('溯源卡'), `相似命令判为同一方案不触发卡 (${JSON.stringify(r6f).slice(0, 60)})`)
 // hub 仲裁：__reminder 存在 → 排队返回 decision（不直接注入）
 const ctx6d = makeCtx()
 const queued6d = []
@@ -212,23 +229,24 @@ for (let i = 0; i < 5; i++) {
 await ctx7c.emit('agent/turn-stopping', { agent: agent7c, turn: 1 })
 await ctx7c.emit('agent/turn-stopping', { agent: agent7c, turn: 1 })
 assert(agent7c.steers.length === 1, `复盘去重 (got ${agent7c.steers.length})`)
-// steer 抛异常 → catch
+// steer 抛异常 → catch（真实断言：不向上抛）
 const ctx7d = makeCtx()
 mod.apply(ctx7d, {})
 const agent7d = { id: 't-7d', session: { events: [{ type: 'turn/start', data: { turn: 1 } }] }, steer() { throw new Error('boom') } }
 for (let i = 0; i < 5; i++) {
   await ctx7d.emit('tools/result', fail('pwsh', `thr-${i}`, agent7d), { isError: true, content: [{ type: 'text', text: 'e' }] })
 }
-await ctx7d.emit('agent/turn-stopping', { agent: agent7d, turn: 1 })
-assert(true, 'steer 异常被捕获')
+let threw7d = false
+try { await ctx7d.emit('agent/turn-stopping', { agent: agent7d, turn: 1 }) } catch { threw7d = true }
+assert(!threw7d, 'steer 异常被捕获')
 
 // =========================================================================
 console.log('\n=== 测试 8: 剩余分支（command failed 文本/session 无 events/content getter/清理 timer） ===')
-// 文本 'command failed' → 74 正则尾部分支
+// 无信封 + 文本 'command failed' → 文本兜底判失败
 const ctx8 = makeCtx()
 mod.apply(ctx8, {})
 const agent8 = fakeAgent('t-8')
-await ctx8.emit('tools/result', fail('pwsh', 'cf', agent8), { isError: false, content: [{ type: 'text', text: 'command failed: exit code 2' }] })
+await ctx8.emit('tools/result', fail('pwsh', 'cf', agent8), { content: [{ type: 'text', text: 'command failed: exit code 2' }] })
 // session 无 events → turn 三元 false 分支（81:6）
 const agent8b = { id: 't-8b', session: {} }
 await ctx8.emit('tools/result', fail('pwsh', 'noevents', agent8b), { isError: true, content: [{ type: 'text', text: 'e' }] })
@@ -274,9 +292,12 @@ mod.apply(ctx9, {})
 const agent9 = fakeAgent('t-9')
 // result null → JSON.stringify('') → 不判失败（74:144 || '' 分支）
 await ctx9.emit('tools/result', fail('pwsh', 'nullres', agent9), null)
-// content undefined + result 自身含 error 文本 → 74:134 || result 分支
-await ctx9.emit('tools/result', fail('pwsh', 'objerr', agent9), { isError: false, error: 'boom error happened' })
-assert(true, 'isFail || 链边界执行')
+// content undefined + 无信封 → JSON.stringify(result) 兜底（74:134 || result 分支；
+// P0 修复后裸 error 字样不再判失败，仅 harness 特定标记有效）
+await ctx9.emit('tools/result', fail('pwsh', 'objerr', agent9), { error: 'boom error happened' })
+// 真实单元断言（替代恒真断言）
+assert(shared.isFailure(null) === false, 'isFailure(null)=false')
+assert(shared.isFailure({ error: 'boom error happened' }) === false, '裸 error 字段不再判失败（P0 回归）')
 
 console.log(`\n结果: ${passed} 通过, ${failed} 失败`)
 process.exit(failed > 0 ? 1 : 0)

@@ -14,7 +14,7 @@ A plugin suite that makes [DeepSeek Harness (DSH)](https://github.com/deepseek-a
 | 🧠 | **Execution discipline**: automatic failure interception, forced reflection, task-planning reminders, memory dedup, experience auto-distilled into skills |
 | 🛠️ | **Ready-made tools**: instant multi-directory file lookup + 9-point environment health check — stop guessing |
 | 📦 | **One-command install/uninstall** via DSH's own plugin manager |
-| 🧪 | **478 unit tests green**, statement & line coverage 100%; pure code, **zero dependencies**, never touches DSH itself |
+| 🧪 | **519 unit tests green**; statement coverage 99.35% (c8, plugins+scripts; full per-file baselines in docs/TESTING.md); pure code, **zero dependencies**, never touches DSH itself |
 | 📚 | **6 built-in skills**: 6-step error handling, error lookup table, fast file lookup, root-cause debugging, local-first, plan-before-execute |
 
 ---
@@ -43,8 +43,8 @@ DSH is full-featured but **not smart by default**: empty system prompt, stubborn
 
 | Layer | What it does |
 |---|---|
-| **Discipline layer** (8 plugins) | failure interception, forced reflection, task planning, memory dedup |
-| **Hub** (discipline-hub) | shared failure log + reminder throttling — plugins don't collide, issues are traceable |
+| **Discipline layer** (9 plugins) | failure interception, forced reflection, task planning, memory dedup, runtime skill registration |
+| **Hub** (discipline-hub) | shared failure log + reminder throttle — plugins don't collide, issues are traceable |
 | **Tools layer** (2 plugins) | instant file lookup, env health check |
 | **Skill layer** (6 skills) | on-demand auto-loading — know what to do on errors, find things fast |
 
@@ -106,12 +106,14 @@ The board layout makes plugin cooperation structural: the discipline group share
 | Plugin cooperation | plugins work independently | **stronger** — discipline plugins share one failure log & reminder pipeline, working as one suite |
 
 > 💡 **Why boards are the better architecture**: the plugins are not meant to work in isolation — one traces the root cause, one distills the lesson, one reminds you to plan. Boards make this cooperation a **structural guarantee** (plugins belong to the same group and share the same facilities by construction) instead of leaving it to chance. Discipline and tools are physically separated with clear boundaries, so adding your own plugin later has an obvious home; groups start/stop as a whole, which makes upgrades and troubleshooting simpler.
+>
+> ℹ️ **Why Option 2 has no dsh-skill-provider**: Option 1 installs the package into `node_modules`, where the 6 bundled skills are invisible to DSH's default loader — `dsh-skill-provider` registers them at runtime. Option 2 copies the skills straight into `~/.dsh/skills`, which DSH's native loader already picks up, so the provider plugin is unnecessary there.
 
 ### Option 1: via DSH's plugin manager (official)
 
 ```bash
-dsh plugin --profile web add github:Classicoke/cleverer-dsh
-# headless instead:  dsh plugin --profile headless add github:Classicoke/cleverer-dsh
+dsh plugin --profile web add github:sunwayking/cleverer-dsh
+# headless instead:  dsh plugin --profile headless add github:sunwayking/cleverer-dsh
 ```
 
 No build step — plugins and skills are ready as soon as the command finishes. Uninstall:
@@ -125,11 +127,13 @@ dsh plugin --profile web remove cleverer-dsh
 Paste this into PowerShell (auto-downloads the release zip → extracts → installs → cleans up):
 
 ```powershell
-$u = 'https://github.com/Classicoke/cleverer-dsh/archive/refs/tags/v1.2.zip'
+# 默认分支为 master（GitHub archive 目录名 = cleverer-dsh-master）；
+# 发布 v1.2.0 tag 后可改用 refs/tags/v1.2.0.zip（目录名 cleverer-dsh-1.2.0）
+$u = 'https://github.com/sunwayking/cleverer-dsh/archive/refs/heads/master.zip'
 $z = "$env:TEMP\cleverer-dsh.zip"; $d = "$env:TEMP\cleverer-dsh-install"
 Invoke-WebRequest $u -OutFile $z
 Expand-Archive $z $d -Force
-pwsh -File "$d\cleverer-dsh-1.2\install.ps1"
+pwsh -File "$d\cleverer-dsh-master\install.ps1"
 Remove-Item $z, $d -Recurse -Force
 ```
 
@@ -139,12 +143,18 @@ Remove-Item $z, $d -Recurse -Force
 
 ```powershell
 # 1. Restore the config backup install auto-created (if you had no
-#    cordis.patch.yml before, the backup is an empty [] patch = pre-install state)
-$dshHome = Join-Path $HOME '.dsh'
+#    cordis.patch.yml before, the backup is an empty [] patch = pre-install state).
+#    与安装脚本一致使用 $env:USERPROFILE（$HOME 在部分环境可能指向别处）。
+#    取【最早】的备份 = 首次安装前的原始状态（多次安装时最新备份仍含挂载行）。
+$dshHome = Join-Path $env:USERPROFILE '.dsh'
 if (-not (Test-Path $dshHome)) { Write-Host "Not found: $dshHome — aborting"; exit 1 }
 $bak = Get-ChildItem "$dshHome\cordis.patch.yml.bak-cleverer-*" |
-       Sort-Object LastWriteTime -Descending | Select-Object -First 1
-if ($bak) { Copy-Item $bak.FullName "$dshHome\cordis.patch.yml" -Force }
+       Sort-Object LastWriteTime | Select-Object -First 1
+if ($bak) {
+    # 先把当前 patch 另存，防止恢复时抹掉你安装后自行添加的行
+    Copy-Item "$dshHome\cordis.patch.yml" "$dshHome\cordis.patch.yml.pre-restore-$(Get-Date -Format 'yyyyMMdd-HHmmssfff')" -ErrorAction SilentlyContinue
+    Copy-Item $bak.FullName "$dshHome\cordis.patch.yml" -Force
+}
 
 # 2. Remove ONLY the files cleverer-dsh installed (explicit list — your own
 #    plugins/skills in the same folders are left untouched)
@@ -160,7 +170,7 @@ Remove-Item "$dshHome\scripts\dsh-env-check.mjs" -ErrorAction SilentlyContinue
 # 3. Restart DSH
 ```
 
-All deletions are scoped to `$HOME\.dsh` (your own user directory, never a system path), and only the files listed above are touched.
+All deletions are scoped to `$env:USERPROFILE\.dsh` (your own user directory, never a system path), and only the files listed above are touched. The `.bak-cleverer-*` backup files are intentionally left in place as rollback evidence.
 
 ---
 
@@ -175,6 +185,7 @@ All deletions are scoped to `$HOME\.dsh` (your own user directory, never a syste
 | `skill-evolver` | junk skills being saved | generalization gate before persisting |
 | `dsh-discipline` | empty system prompt | injects 11 execution rules every turn |
 | `dsh-skill-loader` | skills installed but never used | available-skills reminder at task start + keyword summoning |
+| `dsh-skill-provider` | bundled skills invisible when installed as a package | registers the 6 bundled skills at runtime (Option 1 only) |
 | `dsh-cordis-discipline` | dynamic-plugin misuse | precondition checks (no run before define, no undefine before stop) |
 | `discipline-hub` | plugins each doing their own thing, reminder spam | unified failure log + reminder throttle |
 | `dsh-fast-locate` | slow file lookup | one call, parallel multi-directory scan |

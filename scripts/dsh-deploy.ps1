@@ -14,8 +14,8 @@
   流程：
     1. 同步（开发 dsh-smart/plugins → 生产 ~/.dsh/plugins）
     2. 静态验证：node --check 语法 + env-check 三检查（plugin-syntax/board-consistency/skills-valid）
-    3. 重启 web（找 3080 监听 PID → 杀 → 重启 → 等就绪）
-    4. 行为验证（headless）：纪律段 11 条复述 + 插件加载日志
+    3. 重启 web（找 3080 监听 PID → 杀 → 重启 → 等就绪 → HTTP 存活探测）
+    4. 行为验证（headless 独立进程）：纪律段 11 条复述——证明插件装配正确
     5. 输出 PASS/FAIL 汇总
 #>
 param(
@@ -32,8 +32,14 @@ $devDir    = Join-Path $projRoot 'plugins'
 $prodDir   = "$env:USERPROFILE\.dsh\plugins"
 $repoDir   = $env:DSH_REPO   # 用户 DSH checkout 位置，可环境变量覆盖
 if (-not $repoDir) {
-    # 尝试常见位置；找不到则报错提示设置 DSH_REPO
-    $candidates = @("$env:USERPROFILE\deepseek-harness-master", 'D:\deepseek-harness-master', 'C:\deepseek-harness-master')
+    # 尝试常见位置（与 scripts/dsh-env-check.mjs 的 resolveRepo 探测点对齐，
+    # 并补上 npm 全局安装位置）；找不到则报错提示设置 DSH_REPO
+    $candidates = @(
+        "$env:USERPROFILE\deepseek-harness-master",
+        "$env:APPDATA\npm\node_modules\@deepseek-ai\dsh",
+        'D:\deepseek-harness-master',
+        'C:\deepseek-harness-master'
+    )
     $repoDir = $candidates | Where-Object { Test-Path (Join-Path $_ 'apps\cli\src\bin.ts') } | Select-Object -First 1
     if (-not $repoDir) {
         Write-Host "❌ 找不到 DSH checkout（apps\cli\src\bin.ts）。请设置环境变量 DSH_REPO 指向 DSH 源码目录。" -ForegroundColor Red
@@ -92,8 +98,10 @@ if (-not $SkipRestart) {
         $oldPid = $conn[0].OwningProcess
         # 确认 PID 归属（第 11 条纪律的实践：杀进程前先查命令行）
         $cmdLine = (Get-CimInstance Win32_Process -Filter "ProcessId=$oldPid" -ErrorAction SilentlyContinue).CommandLine
-        if ($cmdLine -notmatch 'bin\.ts web') {
-            Log FAIL "端口 3080 的 PID $oldPid 不是 DSH web（命令行: $($cmdLine.Substring(0, [Math]::Min(80, $cmdLine.Length)))），拒绝杀进程"
+        # 修复：进程可能已退出（Get-CimInstance 返回 null）→ 不调用 .Substring 崩溃
+        if (-not $cmdLine -or $cmdLine -notmatch 'bin\.ts web') {
+            $preview = if ($cmdLine) { $cmdLine.Substring(0, [Math]::Min(80, $cmdLine.Length)) } else { '(进程已退出，无命令行)' }
+            Log FAIL "端口 3080 的 PID $oldPid 不是 DSH web（命令行: $preview），拒绝杀进程"
             exit 1
         }
         Write-Host "  ⚠️ 将停止 PID $oldPid（web）并重启。" -ForegroundColor Yellow
@@ -138,11 +146,25 @@ if (-not $SkipRestart) {
         if ($ready) { Log PASS "web 已就绪 (PID $newPid)" }
         else { Log FAIL "web 75 秒未就绪"; $allOk = $false }
     }
+    # web 存活探测：重启后的服务本身要能应答 HTTP（与 headless 装配验证互补——
+    # 修复前 PASS/FAIL 证据全部来自独立 headless 进程，不能证明刚重启的 web 已加载新插件）
+    if ($ready) {
+        $alive = $false
+        try {
+            $resp = Invoke-WebRequest -Uri 'http://127.0.0.1:3080/' -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+            $alive = ($null -ne $resp.StatusCode)
+        } catch {
+            # 404/405 等也是"服务在应答"（DSH web 根路径无页面属正常）
+            $alive = ($null -ne $_.Exception.Response)
+        }
+        if ($alive) { Log PASS "web HTTP 应答正常（重启后的服务已确认存活）" }
+        else { Log FAIL "web 端口监听但 HTTP 无应答"; $allOk = $false }
+    }
 } else {
     Log SKIP "跳过重启（-SkipRestart）——注意：新插件要重启才生效"
 }
 
-# ── 4. 行为验证（headless 复述纪律段）────────────────────────────────
+# ── 4. 行为验证（headless 独立进程：装配正确性；web 存活见 [3/5]）───────
 Write-Host "`n[4/5] 行为验证 (headless)" -ForegroundColor Yellow
 $didRestart = (-not $SkipRestart -and -not $skipRestartActual)
 if (-not $SkipVerify -and $didRestart) {
@@ -151,7 +173,7 @@ if (-not $SkipVerify -and $didRestart) {
         $res = & pnpm dsh --profile headless "你的系统提示词里有一个'执行纪律'段落。请复述它的第 11 条标题和完整内容。" 2>&1 | Out-String
         Pop-Location
         if ($res -match '动环境前先确认' -and $res -match '启动方式') {
-            Log PASS "纪律段第 11 条已进入 system 提示词（headless 复述验证）"
+            Log PASS "纪律段第 11 条已进入 system 提示词（headless 独立进程验证——证明插件装配正确；重启后的 web 由 [3/5] 存活探测确认）"
         } else {
             Log FAIL "headless 复述未命中第 11 条（检查插件是否加载）"
             $allOk = $false
