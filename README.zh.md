@@ -127,13 +127,13 @@ dsh plugin --profile web remove cleverer-dsh
 在 PowerShell 里粘贴这一行（自动下载发布包 → 解压 → 安装 → 清理临时文件）：
 
 ```powershell
-# 尚未发布 tag 前用 main 分支（GitHub archive 目录名 = cleverer-dsh-main）；
+# 默认分支为 master（GitHub archive 目录名 = cleverer-dsh-master）；
 # 发布 v1.2.0 tag 后可改用 refs/tags/v1.2.0.zip（目录名 cleverer-dsh-1.2.0）
-$u = 'https://github.com/sunwayking/cleverer-dsh/archive/refs/heads/main.zip'
+$u = 'https://github.com/sunwayking/cleverer-dsh/archive/refs/heads/master.zip'
 $z = "$env:TEMP\cleverer-dsh.zip"; $d = "$env:TEMP\cleverer-dsh-install"
 Invoke-WebRequest $u -OutFile $z
 Expand-Archive $z $d -Force
-pwsh -File "$d\cleverer-dsh-main\install.ps1"
+pwsh -File "$d\cleverer-dsh-master\install.ps1"
 Remove-Item $z, $d -Recurse -Force
 ```
 
