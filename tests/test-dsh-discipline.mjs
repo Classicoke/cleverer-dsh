@@ -55,13 +55,14 @@ assert(ctx4.sections[0].order === 0, `order=0 保留 (got ${ctx4.sections[0].ord
 
 // =========================================================================
 console.log('\n=== 测试 5: 无 logger 不崩（ctx.logger 可选） ===')
-const ctx5 = { effect(fn) { return fn() }, systemPrompt: { section() {} } }
+const got5 = []
+const ctx5 = { effect(fn) { return fn() }, systemPrompt: { section(s) { got5.push(s) } } }
 try {
   mod.apply(ctx5, {})
-  assert(true, '无 logger 时 apply 正常')
 } catch (e) {
   assert(false, `无 logger 时 apply 抛错: ${e.message}`)
 }
+assert(got5.length === 1 && got5[0].name === 'execution-discipline', `无 logger 时 apply 仍注册纪律段 (got ${got5.length})`)
 
 // =========================================================================
 console.log('\n=== 测试 6: effect 回调在 apply 时执行（注册即生效） ===')

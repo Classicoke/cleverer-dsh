@@ -22,6 +22,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, writeFile, rename, readdir } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
+import { currentTurn, makeCleanupTimer } from './_shared.mjs'
 
 export const name = 'dsh-memory'
 /** 需要 tools 服务来注册 memory 工具（cordis inject 机制） */
@@ -207,7 +208,8 @@ function makeStore(cfg, dir) {
     }
     const entries = [...s.entries, content]
     const over = sizeOf(entries) - f.limit
-    if (over > 0 && !opts.force) {
+    // 修复：force 只应绕过相似度查重，不再绕过字符上限（工具描述即此语义）
+    if (over > 0) {
       return {
         ok: false,
         reason: 'over-limit',
@@ -224,8 +226,9 @@ function makeStore(cfg, dir) {
   async function replace(kind, index, content) {
     const f = files[kind]
     const s = await ensureLoaded(kind)
-    if (index < 1 || index > s.entries.length) {
-      return { ok: false, reason: 'bad-index', message: `索引 ${index} 越界（现有 ${s.entries.length} 条）` }
+    // 修复：index 非整数（NaN/小数/字符串数字）时旧代码会静默"成功"但不改任何条目
+    if (!Number.isInteger(index) || index < 1 || index > s.entries.length) {
+      return { ok: false, reason: 'bad-index', message: `索引 ${index} 越界或无效（现有 ${s.entries.length} 条，索引须为 1..${s.entries.length} 的整数）` }
     }
     const entries = [...s.entries]
     entries[index - 1] = content
@@ -241,8 +244,9 @@ function makeStore(cfg, dir) {
   async function remove(kind, index) {
     const f = files[kind]
     const s = await ensureLoaded(kind)
-    if (index < 1 || index > s.entries.length) {
-      return { ok: false, reason: 'bad-index', message: `索引 ${index} 越界（现有 ${s.entries.length} 条）` }
+    // 修复：index 非整数时旧代码会静默"成功"但实际未删任何条目
+    if (!Number.isInteger(index) || index < 1 || index > s.entries.length) {
+      return { ok: false, reason: 'bad-index', message: `索引 ${index} 越界或无效（现有 ${s.entries.length} 条，索引须为 1..${s.entries.length} 的整数）` }
     }
     const entries = s.entries.filter((_, i) => i !== index - 1)
     await saveStore(dir, f.file, entries, f.title)
@@ -377,25 +381,33 @@ export function apply(ctx, config = {}) {
 
   // ── 3. nudge 提醒：连续 N 轮无写入后提醒持久化 ─────────────────────────
   if (cfg.nudgeInterval > 0) {
-    const sinceWrite = new WeakMap()
+    // agentId -> { rounds, turn, lastAt }。按"轮"计数（修复前按工具调用次数计数：
+    // nudgeInterval≈"每 N 次工具调用提醒一次"，与文档"连续 N 轮"不符）。
+    // Map keyed by agent.id（修复前 WeakMap keyed by agent 对象，跨对象身份读不到
+    // 状态）；配 lastAt + 清理 timer 防跨 agent 泄漏（修复：Map 无清理会无限增长）
+    const sinceWrite = new Map()
     ctx.on('tools/result', (exec, result) => {
       if (!exec || !exec.agent) return
-      const agent = exec.agent
       if (exec.name === toolName && result && !result.isError) {
-        sinceWrite.set(agent, 0)
+        sinceWrite.set(exec.agent.id, { rounds: 0, turn: currentTurn(exec.agent), lastAt: Date.now() })
         return
       }
-      sinceWrite.set(agent, (sinceWrite.get(agent) ?? 0) + 1)
+      const turn = currentTurn(exec.agent)
+      const st = sinceWrite.get(exec.agent.id)
+      // 同 turn 内多次工具调用只算一轮；进入新 turn 才累加
+      if (!st) sinceWrite.set(exec.agent.id, { rounds: 1, turn, lastAt: Date.now() })
+      else if (st.turn !== turn) sinceWrite.set(exec.agent.id, { rounds: st.rounds + 1, turn, lastAt: Date.now() })
     })
     ctx.on('agent/pre-step', async (payload, next) => {
       const decision = await next()
       if (!decision || decision.kind !== 'enter') return decision
       const agent = payload.agent
       if (!agent) return decision
-      const rounds = sinceWrite.get(agent) ?? 0
+      const st = sinceWrite.get(agent.id)
+      const rounds = st?.rounds ?? 0
       if (rounds < cfg.nudgeInterval) return decision
       const text = `<system-reminder>已连续 ${rounds} 轮没有写入记忆。如果本轮出现了值得跨会话记住的事实（用户偏好、环境信息、教训），请用 memory 工具持久化；没有则忽略本条提醒。</system-reminder>`
-      sinceWrite.set(agent, 0)
+      sinceWrite.set(agent.id, { rounds: 0, turn: st?.turn, lastAt: Date.now() })
       const msg = {
         id: randomUUID(),
         role: 'user',
@@ -404,5 +416,10 @@ export function apply(ctx, config = {}) {
       }
       return { kind: 'enter', messages: [...decision.messages, msg] }
     })
+    ctx.effect(() => makeCleanupTimer((cutoff) => {
+      for (const [agentId, st] of sinceWrite) {
+        if ((st.lastAt || 0) < cutoff) sinceWrite.delete(agentId)
+      }
+    }), 'dsh-memory: nudge state cleanup')
   }
 }

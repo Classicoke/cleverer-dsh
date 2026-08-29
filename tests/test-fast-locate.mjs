@@ -212,8 +212,9 @@ try {
   await symlink(path.join(linkBase, 'real'), path.join(linkBase, 'linkdir'), 'junction')
   const r11e = await tool.execute({ pattern: 'target', roots: [linkBase] }, exec)
   assert(r11e.includes('找到 1 个匹配'), `junction 不进入（无循环）`)
-} catch {
-  assert(true, 'junction 创建失败跳过（无权限环境）')
+} catch (e) {
+  // 真实断言：junction 创建失败必须是环境原因（无权限/不支持），而不是代码缺陷
+  assert(/EPERM|EACCES|ENOSYS|EPROTONOSUPPORT|ENOTSUP/.test(String(e.code || '')), `junction 失败原因合法（无权限/不支持环境）(got ${e.code || e.message})`)
 }
 // stat 失败 → 默认 statLike（110:12）
 const normP = (p) => String(p).replace(/\\/g, '/').toLowerCase()

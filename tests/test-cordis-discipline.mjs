@@ -117,13 +117,13 @@ const r8 = await ctx8.emit('tools/pre-execute', exec('cordis_run', { id: 'ghost'
 assert(r8?.kind === 'deny' && r8.reason.includes('cordis_define'), `未定义 run 被拒 (${r8?.reason?.slice(0, 30)}…)`)
 
 // =========================================================================
-console.log('\n=== 测试 9: cordis_run 无 id 参数 → id=? 仍执行 ===')
+console.log('\n=== 测试 9: cordis_run 无 id 参数 → id=? 被拒（按 id 校验） ===')
 const ctx9 = makeCtx()
 mod.apply(ctx9, {})
 const agent9 = fakeAgent('c-9')
 await ctx9.emit('tools/pre-execute', exec('cordis_define', { name: 'p9', code: 'x' }, agent9), NEXT)
 const r9 = await ctx9.emit('tools/pre-execute', exec('cordis_run', {}, agent9), NEXT)
-assert(r9?.kind === 'allow', `run 无 id 仍放行（id=?）`)
+assert(r9?.kind === 'deny' && r9.reason.includes('尚未 define'), `run 无 id 被拒（修复：只查"define 过任意插件"会放行未定义目标）`) 
 
 // =========================================================================
 console.log('\n=== 测试 10: cordis_undefine 运行中 → deny ===')
@@ -230,15 +230,23 @@ await ctx18.emit('tools/result', exec('cordis_stop', { id: 'x' }, agent18), { is
 await ctx18.emit('tools/result', exec('pwsh', { command: 'ls' }, agent18), { isError: true, value: 'err' })
 await ctx18.emit('tools/result', exec('cordis_run', { id: 'r18' }, agent18), { isError: false, value: 'ok' })
 await ctx18.emit('tools/result', null, { isError: false })
-assert(true, '非相关 result 静默忽略')
+// 真实断言：非相关 result 不污染状态——未 define 的 r18 仍 deny，已 define 的 p18 放行
+await ctx18.emit('tools/pre-execute', exec('cordis_define', { name: 'p18', code: 'x' }, agent18), NEXT)
+const r18b = await ctx18.emit('tools/pre-execute', exec('cordis_run', { id: 'r18' }, agent18), NEXT)
+assert(r18b?.kind === 'deny', `未定义目标仍被拒 (got ${r18b?.kind})`)
+const r18c = await ctx18.emit('tools/pre-execute', exec('cordis_run', { id: 'p18' }, agent18), NEXT)
+assert(r18c?.kind === 'allow', `已定义目标放行 (got ${r18c?.kind})`)
 
 // =========================================================================
 console.log('\n=== 测试 19: tools/result — 无 agent / result 空 → 不崩 ===')
 const ctx19 = makeCtx()
 mod.apply(ctx19, {})
-await ctx19.emit('tools/result', exec('cordis_define', { name: 'p19', code: 'x' }), { isError: false })
-await ctx19.emit('tools/result', exec('cordis_define', { name: 'p19b', code: 'x' }, fakeAgent('c-19b')), undefined)
-assert(true, '无 agent / result undefined 不崩')
+let threw19 = false
+try {
+  await ctx19.emit('tools/result', exec('cordis_define', { name: 'p19', code: 'x' }), { isError: false })
+  await ctx19.emit('tools/result', exec('cordis_define', { name: 'p19b', code: 'x' }, fakeAgent('c-19b')), undefined)
+} catch { threw19 = true }
+assert(!threw19, '无 agent / result undefined 不崩')
 
 // =========================================================================
 console.log('\n=== 测试 13b: cordis 工具 arguments undefined → 不崩（|| {} 兜底） ===')
@@ -316,8 +324,9 @@ mod.apply(ctx22, {})
 const agent22 = { id: 'c-22', session: { events: [] }, steer() { throw new Error('steer boom') } }
 await ctx22.emit('tools/pre-execute', exec('cordis_define', { name: 'p22', code: 'x' }, agent22), NEXT)
 await ctx22.emit('tools/pre-execute', exec('cordis_run', { id: 'p22' }, agent22), NEXT)
-await ctx22.emit('agent/turn-stopping', { agent: agent22, turn: 1 })
-assert(true, 'steer 异常被 catch 不致命')
+let threw22 = false
+try { await ctx22.emit('agent/turn-stopping', { agent: agent22, turn: 1 }) } catch { threw22 = true }
+assert(!threw22, 'steer 异常被 catch 不致命')
 
 // =========================================================================
 console.log('\n=== 测试 23: 状态清理 — 空闲 agent 删除、活跃 agent 保留 ===')
@@ -356,9 +365,12 @@ console.log('\n=== 测试 24: effect cleanup 可调用 ===')
 const ctx24 = makeCtx()
 mod.apply(ctx24, {})
 assert(ctx24._cleanups.length === 2, `注册 2 个 effect（纪律段+状态清理）(got ${ctx24._cleanups.length})`)
-ctx24._cleanups[0]?.()
-ctx24._cleanups[1]?.()
-assert(true, 'cleanup 不抛错')
+let threw24 = false
+try {
+  ctx24._cleanups[0]?.()
+  ctx24._cleanups[1]?.()
+} catch { threw24 = true }
+assert(!threw24, 'cleanup 不抛错')
 
 console.log(`\n结果: ${passed} 通过, ${failed} 失败`)
 process.exit(failed > 0 ? 1 : 0)

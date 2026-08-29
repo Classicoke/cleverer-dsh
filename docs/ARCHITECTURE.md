@@ -31,11 +31,11 @@ cleverer-dsh 把"让 agent 变聪明"拆成三层，每层用不同的注入机�
 
 | 原语 | 实现 | 解决 |
 |---|---|---|
-| **O1 统一失败记录** | `ctx.__errLog` 数组，hub 在 tools/result 聚合 `{at, turn, tool, fp, errorClass, text}`（上限 500 条），错误分类按特异性排序（stale-snapshot 先于 order-dep） | 数据流断裂（各插件重算失败） |
-| **O2 提醒仲裁** | `ctx.__reminder(agentId, {priority, text})` 排队；pre-step 按优先级取前 2 条注入 | 同一步多条 reminder 刷屏 |
+| **O1 统一失败记录** | `ctx.__errLog` 数组，hub 在 tools/result 聚合 `{at, turn, tool, fp, errorClass, text}`（上限 500 条），错误分类按特异性排序（stale-snapshot 先于 order-dep）；anti-stuck 仅在 hub 不存在时兜底写入（防双写） | 数据流断裂（各插件重算失败） |
+| **O2 提醒仲裁** | `ctx.__reminder(agentId, {priority, text})` 排队；pre-step 按优先级取前 2 条注入。env-triage 的溯源/绕圈卡经 hub 仲裁；anti-stuck/memory/plan/skill-loader 自带冷却与每轮限流后直接注入（各注入器均已限流，hub 只仲裁走它的那条通道） | 同一步多条 reminder 刷屏 |
 | **O3 职责分层** | anti-stuck=工具级（同参 deny/旧快照/顺序依赖）；env-triage=方案级（换参溯源/3 方案报告/复盘），触发条件互斥 | 双重提醒 |
-| **O4 根因回写** | env-triage 在 turn-stopping 给 `__errLog` 同分类记录打 `rootCause` 标记；skill-evolver 只沉淀带标记记录 | 垃圾 skill（无根因不沉淀） |
-| **O7 turn 生命周期** | turn 失败数统计（`__hubStats.turnFails`）+ steer 去重（同 turn 只 steer 一次） | 单 turn 长会话循环刷屏 |
+| **O4 根因回写** | env-triage 在 turn-stopping 给 `__errLog` 同分类记录打 `rootCause` 标记；skill-evolver 在 `__errLog` 存在时**只沉淀带 rootCause 标记的记录**（无根因不沉淀，防垃圾 skill） | 垃圾 skill（无根因不沉淀） |
+| **O7 turn 生命周期** | turn 失败数统计（`__hubStats.turnFails`，每次 result 都按 turn 重置）+ steer 去重（同 turn 只 steer 一次） | 单 turn 长会话循环刷屏 |
 
 > O5（干预反馈回路）/ O6（沉淀/记忆路由）为预留扩展点。
 
@@ -43,10 +43,10 @@ cleverer-dsh 把"让 agent 变聪明"拆成三层，每层用不同的注入机�
 
 | 事件 | 监听插件 | 顺序保证 |
 |---|---|---|
-| `tools/result` | hub（聚合）、anti-stuck（指纹）、env-triage（方案）、skill-evolver（沉淀取料） | hub 最先（聚合是基础） |
-| `tools/pre-execute` | anti-stuck（deny）、cordis-discipline（前置条件） | 任一 deny 即拦截 |
-| `agent/pre-step` | hub（仲裁注入）、anti-stuck（提醒）、env-triage（卡）、plan-discipline（todo）、skill-loader（点名） | hub 仲裁限流 |
-| `agent/turn-stopping` | env-triage（复盘+O4 回写）、skill-evolver（沉淀）、cordis（遗留检查） | 各司其职 |
+| `tools/result` | hub（聚合）、anti-stuck（指纹+errLog 兜底）、env-triage（方案）、skill-evolver（沉淀取料）、dsh-memory（nudge 计数）、dsh-cordis-discipline（define 结果确认） | hub 最先（聚合是基础） |
+| `tools/pre-execute` | anti-stuck（deny）、cordis-discipline（前置条件，按目标 id 校验） | 任一 deny 即拦截 |
+| `agent/pre-step` | hub（仲裁注入）、anti-stuck（提醒）、env-triage（卡）、plan-discipline（todo）、skill-loader（点名）、dsh-memory（快照+nudge） | hub 仲裁限流；其余注入器自带冷却/每轮限流 |
+| `agent/turn-stopping` | env-triage（复盘+O4 回写）、skill-evolver（沉淀）、cordis（遗留检查）、anti-stuck（强制反思 steer） | 各司其职 |
 
 ## 设计原则
 

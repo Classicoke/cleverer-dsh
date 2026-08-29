@@ -165,21 +165,19 @@ export function apply(ctx, config = {}) {
       if (ss) {
         sp.set(`stale-snapshot:${ss.file}`, { text: `edit 的 old_string 在 ${ss.file} 中未找到——文件内容已被改动或你的 old_string 是旧快照。先 read 该文件当前内容，再以实际内容为 old_string 重试。`, at: Date.now(), turn })
       }
-      // 共享 __errLog（M1.5 协作层预留：hub 存在时写入）
-      if (ctx.__errLog && Array.isArray(ctx.__errLog)) {
+      // 共享 __errLog（M1.5 协作层预留：hub 存在时不写，由 hub 独占聚合——
+      // 修复双写：anti-stuck 与 hub 同时挂载时每条失败被记两次）
+      if (!ctx.__hubStats && ctx.__errLog && Array.isArray(ctx.__errLog)) {
         ctx.__errLog.push({ at: Date.now(), turn, tool: exec.name, fp, errorClass: od ? 'order-dep' : ss ? 'stale-snapshot' : 'same-tool', text: txt.slice(0, 200) })
       }
     } else {
       // 成功：清掉该指纹的失败记录（连续失败才算死磕）
       s.delete(fp)
-      // P0-3：工具级也衰减（同工具成功一次 → 密度-1，防误报）
+      // 工具级密度：成功即清零——"连续失败"语义下，成功一次打断连续链，
+      // 与指纹级 s.delete(fp) 一致。修复前成功只 -1（净失败计数），
+      // 5 败 1 胜后 count 停在 4，仍触发文案声称的"连续失败"提醒
       const tName = exec.name || '?'
-      const ts = toolStateFor(agentId)
-      const trec = ts.get(tName)
-      if (trec) {
-        trec.count = Math.max(0, trec.count - 1)
-        if (trec.count === 0) ts.delete(tName)
-      }
+      toolStateFor(agentId).delete(tName)
     }
   })
 

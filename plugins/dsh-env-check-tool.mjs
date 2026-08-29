@@ -49,12 +49,14 @@ function runCheck(nodeBin, scriptPath, item, cfg) {
         const errOut = String(stderr || '').trim()
         if (err && !out) {
           // 脚本根本没跑起来（ENOENT 等）或超时
-          resolve({ ok: false, text: `env_check 执行失败: ${String(err).slice(0, 300)}${errOut ? `\nstderr: ${errOut.slice(0, 500)}` : ''}` })
+          resolve({ text: `env_check 执行失败: ${String(err).slice(0, 300)}${errOut ? `\nstderr: ${errOut.slice(0, 500)}` : ''}` })
           return
         }
+        // 非零退出码已通过 "(exit N)" 文本呈现给 agent；不再保留无人消费的 ok 字段
+        // （修复：旧 ok 字段恒 true 且从未被输出/断言，属误导性死代码）
         const code = typeof err?.code === 'number' ? err.code : 0
         const tail = errOut ? `\n[stderr] ${errOut.slice(0, 500)}` : ''
-        resolve({ ok: true, text: `${out}${tail}\n(exit ${code})` })
+        resolve({ text: `${out}${tail}\n(exit ${code})` })
       },
     )
   })
@@ -66,13 +68,13 @@ export function apply(ctx, config = {}) {
 
   ctx.effect(() => ctx.tools.register({
     name: 'env_check',
-    description: '运行环境诊断检查（检查项注册表：dep-consistency/native-binaries/collector-mode/profile-plugin-resolve/network-mirror/pack-artifacts）。agent 遇到环境类错误（依赖缺失、原生二进制、打包、镜像、profile 解析）时，先调本工具拿事实再决策，不要猜。返回每项 ✅/❌ + 具体证据文本。',
+    description: '运行环境诊断检查（检查项注册表：dep-consistency/native-binaries/collector-mode/profile-plugin-resolve/network-mirror/pack-artifacts/plugin-syntax/board-consistency/skills-valid）。agent 遇到环境类错误（依赖缺失、原生二进制、打包、镜像、profile 解析）时，先调本工具拿事实再决策，不要猜。返回每项 ✅/❌ + 具体证据文本。',
     parameters: {
       type: 'object',
       properties: {
         item: {
           type: 'string',
-          description: '检查项 id（单个）或 all（全部）。可用: dep-consistency, native-binaries, collector-mode, profile-plugin-resolve, network-mirror, pack-artifacts',
+          description: '检查项 id（单个）或 all（全部）。可用: dep-consistency, native-binaries, collector-mode, profile-plugin-resolve, network-mirror, pack-artifacts, plugin-syntax, board-consistency, skills-valid',
         },
       },
       required: [],

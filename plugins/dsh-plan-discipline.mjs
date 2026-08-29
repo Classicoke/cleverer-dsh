@@ -18,6 +18,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { allowThisTurn } from './_shared.mjs'
 
 export const name = 'dsh-plan-discipline'
 
@@ -65,7 +66,8 @@ export function apply(ctx, config = {}) {
 
   ctx.logger?.info?.('dsh-plan-discipline: plugin loaded (todo planning nudge)')
 
-  // agent -> 本 turn 已提醒次数
+  // agent -> { turn, count }（按 turn 重置——修复前 count 只增不减，
+  // maxRemindersPerTurn 实际变成"每 agent 生命周期只提醒 N 次"）
   const reminded = new WeakMap()
 
   ctx.on('agent/pre-step', async (payload, next) => {
@@ -88,10 +90,8 @@ export function apply(ctx, config = {}) {
     // 本 turn 是否已写过 todo
     if (hasTodoInTurn(agent, payload.turn)) return decision
 
-    // 每 turn 最多提醒 N 次
-    const count = reminded.get(agent) ?? 0
-    if (count >= maxRemindersPerTurn) return decision
-    reminded.set(agent, count + 1)
+    // 每 turn 最多提醒 N 次（turn 变化时计数归零；公共助手 allowThisTurn）
+    if (!allowThisTurn(reminded, agent, payload.turn, maxRemindersPerTurn)) return decision
 
     // P1-1：试错期强制刷新——从 hub 读 turn 失败数（O7），失败≥3 且
     // 距上次 todo 写入已过 N 步 → 提醒更新计划（本次 A 路径 5 hack 教训：

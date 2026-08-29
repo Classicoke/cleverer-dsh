@@ -50,6 +50,7 @@ function assert(cond, label) {
 
 // ── 工具 ──────────────────────────────────────────────────────────────
 const mod = await import(pathToFileURL('plugins/skill-evolver.mjs').href)
+const shared = await import(pathToFileURL('plugins/_shared.mjs').href)
 
 async function readDir(dir) {
   return (await readdir(dir)).filter(n => n.endsWith('.md'))
@@ -313,8 +314,10 @@ const a8c = fakeAgent('agent-8c')
 await ctx8c.emit('tools/result', { name: 'pwsh', arguments: { command: 'learn fail command alpha' }, agent: a8c }, { isError: true, content: [{ type: 'text', text: '[exit code: 1] boom' }] })
 await ctx8c.emit('tools/result', { name: 'pwsh', arguments: { command: 'learn fail command alpha' }, agent: a8c }, { isError: true, content: [{ type: 'text', text: '[exit code: 1] boom' }] })
 await ctx8c.emit('tools/result', { name: 'pwsh', arguments: { command: 'learn fail command alpha --fixed' }, agent: a8c }, { isError: false, value: { exitCode: 0 }, content: [{ type: 'text', text: 'ok' }] })
-await ctx8c.emit('agent/turn-stopping', { agent: a8c, turn: 1 }) // 不抛错即通过
-assert(true, 'learn 异常被捕获')
+let threw8c = false
+try { await ctx8c.emit('agent/turn-stopping', { agent: a8c, turn: 1 }) } catch { threw8c = true }
+assert(!threw8c, 'learn 异常被捕获（turn-stopping 不崩）')
+assert(await readFile(fileAsDir, 'utf8') === 'x', '异常后原文件完好（未破坏目录结构）')
 await rm(dir8, { recursive: true, force: true })
 
 // =========================================================================
@@ -348,9 +351,10 @@ assert(files9c.some(f => f.includes('bash')), `bash 收割沉淀 (${files9c.join
 // DSH_HOME 未设 → resolveSkillsDir 用 homedir（不落盘验证，仅不崩）
 const ctx9d = makeCtx()
 mod.apply(ctx9d, {})
-// turn-stopping 无 agent
-await ctx9d.emit('agent/turn-stopping', { turn: 1 })
-assert(true, 'apply/观察边界执行')
+// turn-stopping 无 agent（真实断言：不抛异常）
+let threw9d = false
+try { await ctx9d.emit('agent/turn-stopping', { turn: 1 }) } catch { threw9d = true }
+assert(!threw9d, 'apply/观察边界执行（无 agent turn-stopping 不崩）')
 await rm(dir9, { recursive: true, force: true })
 
 // =========================================================================
@@ -451,14 +455,43 @@ try {
   cb10j()
   Date.now = realNow10j
   // agent-10j 状态已清：turn-stopping 无 pending → 不学习（清理生效无副作用）
-  await ctx10j.emit('agent/turn-stopping', { agent: a10j, turn: 1 })
-  assert(true, '清理 timer 执行不崩')
+  let threw10j = false
+  try { await ctx10j.emit('agent/turn-stopping', { agent: a10j, turn: 1 }) } catch { threw10j = true }
+  assert(!threw10j, '清理 timer 执行不崩')
 } finally {
   global.setInterval = rsi10j
   global.clearInterval = rci10j
   Date.now = realNow10j
 }
 await rm(dir10, { recursive: true, force: true })
+
+// =========================================================================
+console.log('\n=== 测试 11: O4 根因契约——errLog 存在时只沉淀带 rootCause 的记录 ===')
+const dir11 = await mkdtemp(path.join(os.tmpdir(), 'se-11-'))
+const ctx11 = makeCtx()
+ctx11.__errLog = []
+mod.apply(ctx11, { skillsDir: dir11 })
+// 11a：errLog 存在但卡点记录无 rootCause → 不沉淀
+const a11 = fakeAgent('agent-11')
+const fp11 = shared.fingerprint({ name: 'pwsh', arguments: { command: 'o4 fail cmd' } })
+for (let i = 0; i < 2; i++) {
+  await ctx11.emit('tools/result', { name: 'pwsh', arguments: { command: 'o4 fail cmd' }, agent: a11 }, { isError: true, content: [{ type: 'text', text: '[exit code: 1] e' }] })
+}
+ctx11.__errLog.push({ fp: fp11, turn: 1, errorClass: 'generic', isFailure: true, text: 'e' })
+await ctx11.emit('tools/result', { name: 'pwsh', arguments: { command: 'o4 fail cmd --fixed' }, agent: a11 }, { isError: false, value: { exitCode: 0 }, content: [{ type: 'text', text: 'ok' }] })
+await ctx11.emit('agent/turn-stopping', { agent: a11, turn: 1 })
+assert((await readDir(dir11)).length === 0, `errLog 存在但无 rootCause → 不沉淀 (got ${(await readDir(dir11)).length})`)
+// 11b：errLog 记录带 rootCause → 正常沉淀
+const a11b = fakeAgent('agent-11b')
+const fp11b = shared.fingerprint({ name: 'pwsh', arguments: { command: 'o4 marked cmd' } })
+for (let i = 0; i < 2; i++) {
+  await ctx11.emit('tools/result', { name: 'pwsh', arguments: { command: 'o4 marked cmd' }, agent: a11b }, { isError: true, content: [{ type: 'text', text: '[exit code: 1] e' }] })
+}
+ctx11.__errLog.push({ fp: fp11b, turn: 1, errorClass: 'generic', isFailure: true, text: 'e', rootCause: 'generic' })
+await ctx11.emit('tools/result', { name: 'pwsh', arguments: { command: 'o4 marked cmd --solved' }, agent: a11b }, { isError: false, value: { exitCode: 0 }, content: [{ type: 'text', text: 'ok' }] })
+await ctx11.emit('agent/turn-stopping', { agent: a11b, turn: 1 })
+assert((await readDir(dir11)).length === 1, `rootCause 标记后沉淀 (got ${(await readDir(dir11)).length})`)
+await rm(dir11, { recursive: true, force: true })
 
 console.log(`\n结果: ${passed} 通过, ${failed} 失败`)
 process.exit(failed > 0 ? 1 : 0)

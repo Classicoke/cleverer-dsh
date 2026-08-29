@@ -184,6 +184,11 @@ const badRep = await tool7.execute({ action: 'replace', target: 'memory', index:
 assert(badRep.includes('越界') && badRep.includes('操作未执行'), `replace 越界`)
 const badRem = await tool7.execute({ action: 'remove', target: 'memory', index: 0 }, exec7)
 assert(badRem.includes('越界'), `remove 越界`)
+// NaN/小数索引（修复：旧代码会静默"成功"但实际未改任何条目）
+const badRepNaN = await tool7.execute({ action: 'replace', target: 'memory', index: 'abc', content: 'x' }, exec7)
+assert(badRepNaN.includes('越界') && badRepNaN.includes('操作未执行'), `replace NaN 索引被拒 (${badRepNaN.slice(0, 50)})`)
+const badRemFrac = await tool7.execute({ action: 'remove', target: 'memory', index: 1.5 }, exec7)
+assert(badRemFrac.includes('越界'), `remove 小数索引被拒 (${badRemFrac.slice(0, 50)})`)
 // remove 全部条目 → 空库
 await tool7.execute({ action: 'remove', target: 'memory', index: 1 }, exec7)
 await tool7.execute({ action: 'remove', target: 'memory', index: 1 }, exec7)
@@ -261,7 +266,7 @@ const exec9 = { signal: new AbortController().signal }
 await tool9.execute({ action: 'add', target: 'memory', content: '短条目内容' }, exec9)
 const overRep = await tool9.execute({ action: 'replace', target: 'memory', index: 1, content: '这是一个非常非常长的替换内容用来触发超限拒绝机制' }, exec9)
 assert(overRep.includes('超出'), `replace 超限 (${overRep.slice(0, 50)})`)
-// nudge：连续 N 轮无写入 → pre-step 提醒；memory 写入 → 重置
+// nudge：连续 N 轮无写入 → pre-step 提醒；memory 写入 → 重置（按轮计数）
 const dir9b = await mkdtemp(path.join(os.tmpdir(), 'mem-9b-'))
 const ctx9b = makeCtx()
 mod.apply(ctx9b, { dir: dir9b, nudgeInterval: 2 })
@@ -270,8 +275,8 @@ const agent9b = fakeAgent('a9b', 1)
 await ctx9b.emit('tools/result', { name: 'pwsh', arguments: { command: 'x' }, agent: agent9b }, { isError: false })
 let d = await ctx9b.emit('agent/pre-step', { agent: agent9b, turn: 1, messages: [], signal: null })
 assert(!(d?.messages || []).some(m => m.content?.[0]?.text?.includes('没有写入记忆')), `1 轮无提醒`)
-// 2 轮 → 提醒
-await ctx9b.emit('tools/result', { name: 'pwsh', arguments: { command: 'y' }, agent: agent9b }, { isError: false })
+// 第 2 轮（新 turn 的工具调用）→ 提醒（修复后同 turn 多次调用只算一轮）
+await ctx9b.emit('tools/result', { name: 'pwsh', arguments: { command: 'y' }, agent: fakeAgent('a9b', 2) }, { isError: false })
 d = await ctx9b.emit('agent/pre-step', { agent: agent9b, turn: 1, messages: [], signal: null })
 assert((d?.messages || []).some(m => m.content?.[0]?.text?.includes('没有写入记忆')), `2 轮触发提醒`)
 // memory 写入成功 → 计数重置
@@ -336,6 +341,47 @@ const a10e = fakeAgent('a10e', 1)
 await ctx10e.emit('tools/result', { name: 'pwsh', arguments: { command: 'y' }, agent: a10e }, { isError: false })
 const r10e = await ctx10e.emit('agent/pre-step', { agent: a10e, turn: 1, messages: [], signal: null })
 assert((r10e?.messages || []).some(m => m.content?.[0]?.text?.includes('没有写入记忆')), `nudgeInterval=1 立即提醒`)
+// nudge 状态清理 timer（修复：Map 无清理会跨 agent 无限增长）
+const ctx10f = makeCtx()
+let cb10f = null
+const rsi10f = global.setInterval
+const rci10f = global.clearInterval
+global.setInterval = (cb) => { cb10f = cb; return 1 }
+global.clearInterval = () => {}
+const realNow10f = Date.now
+try {
+  mod.apply(ctx10f, { dir: dir10, nudgeInterval: 2 })
+  assert(typeof cb10f === 'function', 'nudge 清理 timer 注册')
+  const a10f = fakeAgent('a10f', 1)
+  await ctx10f.emit('tools/result', { name: 'pwsh', arguments: { command: 'x' }, agent: a10f }, { isError: false })
+  Date.now = () => realNow10f() + 31 * 60 * 1000
+  cb10f()
+  Date.now = realNow10f
+  // 清理后状态重建：同 agent 新 turn 首次调用 rounds=1（若旧状态残留，会续接到 rounds=2 触发提醒）
+  await ctx10f.emit('tools/result', { name: 'pwsh', arguments: { command: 'y' }, agent: fakeAgent('a10f', 2) }, { isError: false })
+  const d10f = await ctx10f.emit('agent/pre-step', { agent: a10f, turn: 1, messages: [], signal: null })
+  assert(!(d10f?.messages || []).some(m => m.content?.[0]?.text?.includes('没有写入记忆')), 'nudge 状态清理后计数重建')
+} finally {
+  global.setInterval = rsi10f
+  global.clearInterval = rci10f
+  Date.now = realNow10f
+}
+// 去重窗口过期（agent B 审查缺口）：窗口内 force 也被时间窗拒；过期后 force 走主查重
+// （相似度 0.62~0.85 带警告放行）——证明窗口随 Date.now 前进而失效
+const dir10d = await mkdtemp(path.join(os.tmpdir(), 'mem-10d-'))
+const ctx10d = makeCtx()
+mod.apply(ctx10d, { dir: dir10d, dedupTimeWindowSec: 60 })
+const tool10d = ctx10d.registered[0]
+await tool10d.execute({ action: 'add', target: 'memory', content: '用户偏好中文回答问题' }, exec10)
+const realNow10d = Date.now
+try {
+  Date.now = () => realNow10d() + 61 * 1000
+  const exp = await tool10d.execute({ action: 'add', target: 'memory', content: '用户偏好中文回答详情说明', force: true }, exec10)
+  assert(exp.includes('已添加（force 绕过'), `时间窗过期后不再被窗口拦截 (${exp.slice(0, 60)})`)
+} finally {
+  Date.now = realNow10d
+}
+await rm(dir10d, { recursive: true, force: true })
 await rm(dir10, { recursive: true, force: true })
 await rm(dir10b, { recursive: true, force: true })
 await rm(dshHome10, { recursive: true, force: true })

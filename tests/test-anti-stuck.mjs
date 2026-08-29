@@ -249,9 +249,10 @@ for (let i = 0; i < 5; i++) {
   await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: `steer-cmd-${i}` }, agent: agent10 },
     { isError: true, content: [{ type: 'text', text: 'boom' }] })
 }
-// 不抛错即通过
-await ctx.emit('agent/turn-stopping', { agent: agent10, turn: 5, signal: null })
-assert(true, 'steer 异常被 catch（turn-stopping 不崩）')
+// 真实断言：steer 抛异常不向上传播（turn-stopping 不崩）
+let threw10 = false
+try { await ctx.emit('agent/turn-stopping', { agent: agent10, turn: 5, signal: null }) } catch { threw10 = true }
+assert(!threw10, 'steer 异常被 catch（turn-stopping 不崩）')
 
 // =========================================================================
 console.log('\n=== 测试 11: 状态清理 timer — 四组旧状态删除、活跃保留 ===')
@@ -298,9 +299,9 @@ try {
   const rA2 = await ctx.emit('agent/pre-step', { agent: agentA2, turn: 2, messages: [], signal: null }, nextA2)
   const tA2 = (rA2?.messages || []).map(m => m?.content?.[0]?.text || '').join('|')
   assert(tA2.includes('累计 3 次'), `旧状态清理后累计数归零重算 (${tA2.slice(0, 50)}…)`)
-  // agentB 保留：turn-stopping 无 steer（失败 1 次 < 5，纯验证不崩）
+  // agentB 保留：turn-stopping 无 steer（失败 1 次 < 5）——状态保留且无异常
   await ctx.emit('agent/turn-stopping', { agent: agentB, turn: 1, signal: null })
-  assert(true, '活跃 agent 状态保留不崩')
+  assert(ctx.steers.length === 0, '活跃 agent 状态保留（失败不足不 steer）')
 } finally {
   global.setInterval = realSetInterval
   global.clearInterval = realClearInterval
@@ -334,7 +335,10 @@ await ctx.emit('tools/result', { name: 'todo_write', arguments: { todos: [1, 2] 
 const cyc = { self: null }; cyc.self = cyc
 await ctx.emit('tools/result', { name: 'weird', arguments: cyc, agent: agent12 },
   { isError: true, content: [{ type: 'text', text: 'e' }] })
-assert(true, 'fingerprint 各边界路径不崩')
+// 边界路径的真实单元断言（替代恒真断言）
+assert(shared.fingerprint({}) === '?::{}', 'fingerprint 无 name/arguments 兜底')
+assert(shared.fingerprint({ name: 'pwsh' }) === 'pwsh::{}', 'fingerprint 无 arguments → {}')
+assert(shared.fingerprint({ name: 'weird', arguments: cyc }).includes('Circular'), 'fingerprint 循环引用不崩且标记 Circular')
 
 // =========================================================================
 console.log('\n=== 测试 13: isFailure 边界（null/空 content/文本标记） ===')
@@ -349,19 +353,27 @@ await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: 'x2' }, age
 // content 干净文本 + isError false → 不算失败
 await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: 'x3' }, agent: agent13 },
   { isError: false, content: [{ type: 'text', text: 'all good' }] })
-// content 含 error 标记（isError false）→ 算失败（105 正则）
+// P0 回归（2026-08 实测误报）：isError=false 的成功结果即使 content 含
+// error/exception/traceback 字样也不得判失败——内容型工具返回数据含这些词是常态
 await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: 'x4' }, agent: agent13 },
   { isError: false, content: [{ type: 'text', text: 'something error happened' }] })
-// content 含 [exit code: 1] 文本（105 正则第二分支）
-await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: 'x5' }, agent: agent13 },
-  { isError: false, content: [{ type: 'text', text: '[exit code: 1] boom' }] })
-// x4 再失败一次（连续 2 次）→ 同命令重试应 deny
 await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: 'x4' }, agent: agent13 },
-  { isError: false, content: [{ type: 'text', text: 'something error happened' }] })
+  { isError: false, content: [{ type: 'text', text: 'glob 命中: skills/dsh-error-protocol.md（exception 字样亦然）' }] })
 const d13 = await ctx.emit('tools/pre-execute',
   { name: 'pwsh', arguments: { command: 'x4' }, agent: agent13 })
-assert(d13.kind === 'deny', `文本 error 标记被识别为失败并拒绝 (got ${d13.kind})`)
-assert(true, 'isFailure 边界路径全部执行')
+assert(d13.kind !== 'deny', `isError=false 的成功结果不因 error 字样误判失败 (got ${d13.kind})`)
+// 无信封 + harness 失败标记文本（[exit code: 1] / command failed）→ 兜底判失败
+await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: 'x5' }, agent: agent13 },
+  { content: [{ type: 'text', text: '[exit code: 1] boom' }] })
+await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: 'x5' }, agent: agent13 },
+  { content: [{ type: 'text', text: '[exit code: 1] boom' }] })
+const d13b = await ctx.emit('tools/pre-execute',
+  { name: 'pwsh', arguments: { command: 'x5' }, agent: agent13 })
+assert(d13b.kind === 'deny', `无信封 + [exit code: 1] 文本仍判失败并 deny (got ${d13b.kind})`)
+// 边界路径的真实单元断言（替代恒真断言）
+assert(shared.isFailure(null) === false, 'isFailure(null)=false')
+assert(shared.isFailure({ isError: false, content: undefined }) === false, 'isFailure(空 content)=false')
+assert(shared.isFailure({ isError: false, content: [{ type: 'text', text: 'all good' }] }) === false, 'isFailure(干净文本)=false')
 
 // =========================================================================
 console.log('\n=== 测试 14: failureText / currentTurn 边界 ===')
@@ -385,7 +397,11 @@ const agent14d = fakeAgent('agent-14d')
 Object.defineProperty(agent14d.session, 'events', { get() { throw new Error('boom') } })
 await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: 'f4' }, agent: agent14d },
   { isError: true, content: [{ type: 'text', text: 'e' }] })
-assert(true, 'failureText/currentTurn 边界路径不崩')
+// 边界路径的真实单元断言（替代恒真断言）
+assert(shared.currentTurn(agent14c) === 0, 'currentTurn 无 turn/start → 0')
+assert(shared.currentTurn(agent14d) === 0, 'currentTurn events getter 抛 → 0')
+const et14 = shared.extractText({ content: [42, 'raw', { type: 'text', text: 'real err' }] })
+assert(et14.trim() === 'real err' && !et14.includes('raw'), 'extractText 只取 text 块（非 text 元素被跳过）')
 
 // =========================================================================
 console.log('\n=== 测试 15: tools/result 特殊路径（无 exec/deny 不计/容量/stale/errLog/衰减） ===')
@@ -487,7 +503,11 @@ delete ctx.logger
 mod.apply(ctx, {})
 await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: 'nolog' }, agent: fakeAgent('agent-18') },
   { isError: true, content: [{ type: 'text', text: 'e' }] })
-assert(true, '无 logger apply + 事件不崩')
+// 真实断言：无 logger 下插件功能仍生效（同命令失败 2 次 → deny）
+await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: 'nolog' }, agent: fakeAgent('agent-18') },
+  { isError: true, content: [{ type: 'text', text: 'e' }] })
+const d18 = await ctx.emit('tools/pre-execute', { name: 'pwsh', arguments: { command: 'nolog' }, agent: fakeAgent('agent-18') })
+assert(d18?.kind === 'deny', '无 logger 时 deny 逻辑仍生效')
 
 // =========================================================================
 console.log('\n=== 测试 19: 剩余边界分支（76/103/105/120/128/149/200/255/261/273/289） ===')
@@ -534,6 +554,14 @@ const agent19g = fakeAgent('agent-19g')
 await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: 'plain-fail' }, agent: agent19g },
   { isError: true, content: [{ type: 'text', text: 'generic failure' }] })
 assert(ctx.__errLog.length === 1 && ctx.__errLog[0].errorClass === 'same-tool', `普通失败 errLog same-tool (${ctx.__errLog[0]?.errorClass})`)
+// hub 存在时 anti-stuck 不写 __errLog（防双写：hub 独占聚合）
+const ctx19h = makeCtx()
+ctx19h.__errLog = []
+ctx19h.__hubStats = { turnFails: () => 0 }
+mod.apply(ctx19h, {})
+await ctx19h.emit('tools/result', { name: 'pwsh', arguments: { command: 'hub-owns' }, agent: fakeAgent('agent-19h') },
+  { isError: true, content: [{ type: 'text', text: 'generic failure' }] })
+assert(ctx19h.__errLog.length === 0, 'hub 存在时 anti-stuck 不双写 errLog')
 // 成功 exec 无 name → 261:30
 await ctx.emit('tools/result', { arguments: { command: 'no-name-ok' }, agent: agent19g },
   { isError: false, content: [{ type: 'text', text: 'ok' }] })
@@ -544,7 +572,10 @@ assert(r19h?.kind === 'allow', `pre-execute 无 agent 直通 (${JSON.stringify(r
 const next19i = async () => ({ kind: 'enter', messages: [{ id: 'x', role: 'user', content: [], source: {} }] })
 const r19i = await ctx.emit('agent/pre-step', { turn: 1, messages: [], signal: null }, next19i)
 assert(r19i?.kind === 'enter', 'pre-step 无 agent 透传 enter')
-assert(true, '剩余边界分支全部执行')
+// P0 回归单元断言（替代恒真断言）：裸 error/traceback 不再是失败标记
+assert(shared.isFailure({ isError: false, content: [{ type: 'text', text: 'Traceback (most recent call last):\n  File "x.py"' }] }) === false, 'isFailure 不匹配裸 traceback')
+assert(shared.isFailure({ isError: false, content: '' }) === false, 'isFailure falsy content=false')
+assert(shared.isFailure({ isError: false, content: null }) === false, 'isFailure null content=false')
 
 // =========================================================================
 console.log('\n=== 测试 20: 分支穷举（76 空串路径/105 command failed/128 无 session/255 order-dep） ===')
@@ -554,10 +585,10 @@ mod.apply(ctx, {})
 const agent20a = fakeAgent('agent-20a')
 await ctx.emit('tools/result', { name: 'edit', arguments: { file_path: '' }, agent: agent20a },
   { isError: true, content: [{ type: 'text', text: 'old_string was not found' }] })
-// content 含 command failed → 105:54
+// 无信封 + content 含 command failed → 文本兜底判失败
 const agent20b = fakeAgent('agent-20b')
 await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: 'cf' }, agent: agent20b },
-  { isError: false, content: [{ type: 'text', text: 'command failed: exit code 2' }] })
+  { content: [{ type: 'text', text: 'command failed: exit code 2' }] })
 // agent 无 session → currentTurn 128（!events return 0）
 const agent20c = { id: 'agent-20c' }
 await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: 'nosess' }, agent: agent20c },
@@ -580,8 +611,10 @@ const evilValue = {}
 Object.defineProperty(evilValue, 'exitCode', { get() { throw new Error('boom') }, enumerable: false })
 const evilResult = { isError: false, value: evilValue }
 await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: 'evilvalue' }, agent: agent20f }, evilResult)
-assert(true, 'isFailure catch 路径执行')
-assert(true, '分支穷举场景全部执行')
+// 真实单元断言（替代恒真断言）
+assert(shared.isFailure(evilResult) === false, 'isFailure value getter 抛 → catch 后按信封判成功')
+assert(shared.isFailure({ content: [{ type: 'text', text: 'command failed: exit code 2' }] }) === true, 'isFailure 文本兜底 command failed')
+assert(shared.isFailure({ content: [{ type: 'text', text: 'plain text' }] }) === false, 'isFailure 普通文本不误判')
 
 
 // =========================================================================

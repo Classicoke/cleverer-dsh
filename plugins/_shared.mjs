@@ -16,17 +16,25 @@
 export function isFailure(result) {
   if (!result) return false
   if (result.isError === true) return true
-  // 兜底 1: canonical value 里的 exitCode（pwsh/bash 工具的 value 形状）
+  // 兜底 1: canonical value 里的 exitCode（pwsh/bash 工具的 value 形状）。
+  // exitCode 是数字时信封即为权威：0=成功、非 0=失败，不再扫文本。
   try {
     const v = result.value
     if (v && typeof v === 'object') {
       const code = v.exitCode
-      if (typeof code === 'number' && code !== 0) return true
+      if (typeof code === 'number') {
+        return code !== 0
+      }
     }
   } catch { /* ignore */ }
-  // 兜底 2: 渲染文本里的失败标记（[exit code: N]、error、failed 等）
+  // 已知成功信封（isError=false）→ 不再扫文本。P0 修复（2026-08 实测误报）：
+  // read/glob/grep 等"内容型"工具的返回数据里出现 error/exception/traceback
+  // 字样是常态（如列出 dsh-error-*.md、读到含 error 的文档正文），旧实现把
+  // 这些成功输出判为失败，在真实会话中触发幻影纪律卡（5 个会话实证）。
+  if (result.isError === false) return false
+  // 兜底 2: 无任何信封信息时才扫文本，且只认 harness 特定失败标记
   const txt = JSON.stringify(result.content || result || '').toLowerCase()
-  return /(\[exit code: [1-9]|error|exception|traceback|command failed|failed:|exit code: [1-9])/.test(txt)
+  return /(\[exit code: [1-9]|command failed)/.test(txt)
 }
 
 /** 提取工具结果纯文本（content 数组 → join；失败原因用）。
@@ -214,12 +222,16 @@ export function similarity(a, b) {
 
 // ── turn 推断 ─────────────────────────────────────────────────────────
 
-/** 从 agent 的 session 事件流推断当前 turn 号（无则 0） */
+/** 从 agent 的 session 事件流推断当前 turn 号（无则 0）。
+ *  单遍扫描记录最后一个 turn/start——不 spread 全量事件数组（长会话 O(n) 内存/次） */
 export function currentTurn(agent) {
   try {
     const events = agent?.session?.events
     if (!events) return 0
-    const last = [...events].findLast(e => e.type === 'turn/start')
+    let last = null
+    for (const e of events) {
+      if (e.type === 'turn/start') last = e
+    }
     return last && last.type === 'turn/start' ? last.data.turn : 0
   } catch {
     return 0
@@ -227,6 +239,19 @@ export function currentTurn(agent) {
 }
 
 // ── 状态清理 timer ────────────────────────────────────────────────────
+
+/**
+ * 每 turn 限流助手（plan-discipline / skill-loader 共用，消除三处重复的
+ * {turn,count} 计数逻辑）：map 存 {turn, count, lastAt}；返回本次是否允许
+ * （允许则计数 +1）。map 可为 WeakMap（key=agent 对象）或 Map（key=agentId）。
+ */
+export function allowThisTurn(map, key, turn, max) {
+  const rec = map.get(key)
+  if (rec && rec.turn === turn && rec.count >= max) return false
+  if (!rec || rec.turn !== turn) map.set(key, { turn, count: 1, lastAt: Date.now() })
+  else { rec.count += 1; rec.lastAt = Date.now() }
+  return true
+}
 
 /**
  * 创建"10 分钟周期清理超过 30 分钟未活动状态"的 timer。

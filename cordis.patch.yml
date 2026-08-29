@@ -1,4 +1,4 @@
-# cleverer-dsh bundle patch — installed via `dsh plugin add github:Classicoke/cleverer-dsh`
+# cleverer-dsh bundle patch — installed via `dsh plugin add github:sunwayking/cleverer-dsh`
 # (or any git/path spec). Applied as a profile bundle layer; every plugin is
 # resolved as `cleverer-dsh/plugins/<file>.mjs` from the profile's node_modules
 # (pnpm hoisted layout), so no absolute paths and no {{DSH_HOME}} templates.

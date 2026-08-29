@@ -16,7 +16,7 @@
  *                              name: 'file:///.../dsh-skill-loader.mjs'
  */
 import { randomUUID } from 'node:crypto'
-import { makeCleanupTimer } from './_shared.mjs'
+import { makeCleanupTimer, allowThisTurn } from './_shared.mjs'
 
 export const name = 'dsh-skill-loader'
 
@@ -47,12 +47,13 @@ const DEFAULT_SKILLS = [
   {
     name: 'dsh-fast-lookup',
     trigger: '找文件/查东西/定位实体：先 fast_locate 一步扫描（并行多根、跳过噪音目录），别串行 grep→pwsh',
-    keywords: ['在哪', '找文件', '搜', '位置', '路径', '查找', '定位', '找一下', '查查'],
+    keywords: ['在哪', '找文件', '位置', '路径', '查找', '定位', '找一下', '查查'],
   },
   {
     name: 'plan-before-execute',
     trigger: '多步骤任务（先/然后/逐个/多个文件/流程）',
-    keywords: ['先', '然后', '接着', '第一步', '第二步', '依次', '逐个', '分别', '流程', '多个', '几个'],
+    // 修复：去掉单字关键词"先"——任何含"先"的中文句都点名，几乎每轮注入
+    keywords: ['然后', '接着', '第一步', '第二步', '依次', '逐个', '分别', '流程', '多个', '几个'],
   },
 ]
 
@@ -64,7 +65,8 @@ export function apply(ctx, config = {}) {
 
   ctx.logger?.info?.(`dsh-skill-loader: loaded (${skills.length} skills registered)`)
 
-  // agentId -> 本 turn 已注入次数
+  // agentId -> { turn, count, lastAt }（按 turn 重置——修复前 count 只增不减，
+  // maxInjectsPerTurn 实际变成"每 agent 生命周期只点名 N 次"）
   const injected = new Map()
   // agentId -> 会话级清单注入时间戳（每 agent 仅一次，防刷屏）
   const listShownAt = new Map()
@@ -119,10 +121,8 @@ export function apply(ctx, config = {}) {
     const hits = matchSkills(userText)
     if (hits.length === 0) return decision
 
-    // 每 turn 限流
-    const count = injected.get(agent.id) ?? 0
-    if (count >= maxInjectsPerTurn) return decision
-    injected.set(agent.id, count + 1)
+    // 每 turn 限流（turn 变化时计数归零；公共助手 allowThisTurn）
+    if (!allowThisTurn(injected, agent.id, payload.turn, maxInjectsPerTurn)) return decision
 
     const named = hits.map(s => `\`${s.name}\``).join(' / ')
     const text = `<system-reminder>当前任务匹配纪律 skill：${named}。先用 skill 工具加载对应 skill 并按其中步骤执行（不要跳过加载直接凭印象做）。</system-reminder>`
@@ -137,8 +137,8 @@ export function apply(ctx, config = {}) {
 
   // ── 清理 ─────────────────────────────────────────────────────────────
   ctx.effect(() => makeCleanupTimer((cutoff) => {
-    for (const [agentId, at] of injected) {
-      if (at < cutoff) injected.delete(agentId)
+    for (const [agentId, r] of injected) {
+      if (r.lastAt < cutoff) injected.delete(agentId)
     }
     for (const [agentId, at] of listShownAt) {
       if (at < cutoff) listShownAt.delete(agentId)

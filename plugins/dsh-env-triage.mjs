@@ -20,7 +20,7 @@
  * 零依赖纯 ESM。挂载：cordis.patch.yml 的 insert 列表（在 discipline-hub 之后）。
  */
 import { randomUUID } from 'node:crypto'
-import { isFailure, extractText, classifyError, similarity, currentTurn, makeCleanupTimer } from './_shared.mjs'
+import { isFailure, extractText, classifyError, fingerprint, similarity, currentTurn, makeCleanupTimer } from './_shared.mjs'
 
 export const name = 'dsh-env-triage'
 
@@ -33,8 +33,6 @@ const DEFAULT_CONFIG = {
   maxSchemesBeforeReport: 3,
   /** turn 复盘触发：turn 失败 ≥ N 次 */
   maxTurnFailsForReview: 5,
-  /** 每 turn 最多注入提醒次数 */
-  maxRemindersPerTurn: 2,
   /** 方案判定：指纹差异 ≥ 此值视为"不同方案"（bigram Jaccard） */
   schemeDistinctThreshold: 0.4,
 }
@@ -62,7 +60,9 @@ export function apply(ctx, config = {}) {
     const agentId = exec.agent.id
     const s = stateFor(agentId)
     const turn = currentTurn(exec.agent)
-    if (s.turn !== turn) { s.turn = turn; s.fails = [] }
+    // turn 变化时同时重置 warned——修复前 warned 只置位从不复位，
+    // 溯源/绕圈卡每个 agent 生命周期只发一次，真卡壳的新 turn 反而收不到卡
+    if (s.turn !== turn) { s.turn = turn; s.fails = []; s.warned = {} }
 
     // 从 hub __errLog 拿分类（若 hub 存在）；独立分类器兜底
     let cls = 'generic'
@@ -74,7 +74,9 @@ export function apply(ctx, config = {}) {
       const last = [...ctx.__errLog].reverse().find(r => r.errorClass && r.text && text && r.text.includes(text.slice(0, 30)))
       if (last) cls = last.errorClass
     }
-    s.fails.push({ fp: `${exec.name}::${String(exec.arguments?.command || exec.arguments?.file_path || '').slice(0, 80)}`, cls, ts: Date.now(), text })
+    // 修复：用 _shared 的规范指纹（全参数覆盖+长参数取样），
+    // 替代自造的"name+参数前 80 字符"截断——后者让不同 read/命令撞同一指纹
+    s.fails.push({ fp: fingerprint(exec), cls, ts: Date.now(), text })
     if (s.fails.length > 12) s.fails.shift()
   })
 

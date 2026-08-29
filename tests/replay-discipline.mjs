@@ -14,10 +14,14 @@
  *
  * 输出：基线 vs 改进的干预统计对比，验收标准 M1：覆盖率 21% → ≥50%
  */
-import { readFileSync, readdirSync } from 'node:fs'
+import { readFileSync, readdirSync, mkdtempSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { randomUUID } from 'node:crypto'
+
+// 失败判定与插件共用 _shared 的实现（消除重复分叉：修复前本文件自带一份旧正则）
+const { isFailure: sharedIsFailure } = await import(pathToFileURL(resolve('plugins/_shared.mjs')).href)
 
 // ── 参数（必传，不硬编码本机路径）───────────────────────────────────
 // 用法: node replay-discipline.mjs <pluginsDir> <sessionLog>
@@ -112,21 +116,25 @@ function resultText(o) {
   return txt
 }
 
-/** 判定 result 是否失败（对齐 anti-stuck.isFailure 逻辑） */
+/** 判定 result 是否失败：把日志记录适配成 result 形状后复用 _shared.isFailure
+ *  （信封优先 + harness 标记，与插件同一实现，消除重复分叉） */
 function isFailure(o, txt) {
-  const d = o.data || {}
-  if (d.error) return true
-  if (/\[exit code: [1-9]\d*\]/.test(txt)) return true
-  if (/Error:|failed|exception|traceback|command failed|failed to/.test(txt)) return true
-  return false
+  const m = txt.match(/\[exit code: (\d+)\]/)
+  return sharedIsFailure({
+    isError: o?.data?.error === true ? true : undefined,
+    value: m ? { exitCode: parseInt(m[1]) } : undefined,
+    content: [{ type: 'text', text: txt }],
+  })
 }
 
 // ── 回放主逻辑 ────────────────────────────────────────────────────────
 async function replay(pluginFile, events) {
   const ctx = makeCtx()
   const mod = await import(pathToFileURL(pluginFile).href)
-  // 回放是毫秒级跑完，cooldown 会阻止连续注入 → 传 0 让每步可注入
-  mod.apply(ctx, { reminderCooldownSec: 0 })
+  // 回放是毫秒级跑完，cooldown 会阻止连续注入 → 传 0 让每步可注入。
+  // 同时把会落盘的插件（skill-evolver/dsh-memory）指到临时目录，防止污染真实状态。
+  const sandboxDir = mkdtempSync(join(tmpdir(), 'replay-sandbox-'))
+  mod.apply(ctx, { reminderCooldownSec: 0, skillsDir: sandboxDir, dir: join(sandboxDir, 'memories') })
   const agent = makeAgent('replay-agent')
 
   // 事件序列：tools/result 需要对应的 exec（来自最近的 tool/call）
@@ -204,17 +212,36 @@ console.log(`[replay] 日志事件数: ${events.length}`)
 const calls = events.filter(o => o.type === 'tool/call').length
 const results = events.filter(o => o.type === 'tool/result').length
 console.log(`[replay] tool/call: ${calls}, tool/result: ${results}`)
+if (calls === 0 || results === 0) {
+  console.error('[replay] FAIL: 日志中没有 tool/call 或 tool/result 事件，无法回放')
+  process.exit(1)
+}
 
-const plugins = readdirSync(PLUGINS_DIR).filter(f => f.endsWith('.mjs'))
+// 修复：跳过 _shared.mjs（公共模块无 apply，旧实现会在此崩溃）
+const plugins = readdirSync(PLUGINS_DIR).filter(f => f.endsWith('.mjs') && !f.startsWith('_'))
+let totalDeny = 0, totalRem = 0, totalSteer = 0, totalFails = 0
 for (const f of plugins.sort()) {
   const stats = await replay(join(PLUGINS_DIR, f), events)
+  totalDeny += stats.deny; totalRem += stats.reminders; totalSteer += stats.steers; totalFails += stats.fails
   const coverage = stats.fails > 0 ? Math.round((stats.deny + stats.reminders + stats.steers) * 100 / stats.fails) : 0
   console.log(`\n=== ${f} ===`)
   console.log(`  工具结果: ${stats.results} | 失败: ${stats.fails} | deny: ${stats.deny} | reminders: ${stats.reminders} | steers: ${stats.steers}`)
   console.log(`  干预覆盖率((deny+reminder+steer)/失败): ${coverage}%`)
 }
 
-// ── 汇总：所有纪律插件的总干预 ────────────────────────────────────────
-console.log('\n[replay] 完成。验收对照：M1 目标 = 干预覆盖率 ≥50%（基线 21%≈6/28）')
-// 插件 effect 里有 setInterval 保持事件循环 → 显式退出
+// ── 汇总与验收判定（真实断言，替代恒定的 process.exit(0)）────────────
+const totalInterventions = totalDeny + totalRem + totalSteer
+const coverage = totalFails > 0 ? Math.round(totalInterventions * 100 / totalFails) : 0
+console.log(`\n[replay] 总失败 ${totalFails} | 总干预 ${totalInterventions} | 覆盖率 ${coverage}%`)
+console.log('[replay] 验收对照：M1 目标 = 干预覆盖率 ≥50%（基线 21%≈6/28）')
+// 插件 effect 里有 setInterval 保持事件循环 → 判定后显式退出
+if (totalFails === 0) {
+  console.error('[replay] FAIL: 日志无失败事件，无法验收')
+  process.exit(1)
+}
+if (coverage < 50) {
+  console.error(`[replay] FAIL: 干预覆盖率 ${coverage}% < 50% 验收线`)
+  process.exit(1)
+}
+console.log('[replay] PASS: 干预覆盖率 ≥50%，验收通过')
 process.exit(0)

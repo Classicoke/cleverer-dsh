@@ -69,6 +69,12 @@ export function apply(ctx, config = {}) {
     if (!exec?.agent) return
     const txt = extractText(result)
     const turn = currentTurn(exec.agent)
+    // turn 统计：每次 result 都先按 turn 重置（成功/失败都算）——
+    // 修复惰性重置：新 turn 只有成功时旧失败数残留，
+    // plan-discipline 会据此发出虚假的"stale plan"提醒
+    const st = turnStats.get(exec.agent.id) || { turn, fails: 0 }
+    if (st.turn !== turn) { st.turn = turn; st.fails = 0 }
+    turnStats.set(exec.agent.id, st)
     const rec = {
       at: Date.now(),
       turn,
@@ -85,10 +91,7 @@ export function apply(ctx, config = {}) {
     }
     // turn 统计
     if (rec.isFailure) {
-      const st = turnStats.get(exec.agent.id) || { turn, fails: 0 }
-      if (st.turn !== turn) { st.turn = turn; st.fails = 0 }
       st.fails += 1
-      turnStats.set(exec.agent.id, st)
     }
   })
 

@@ -264,17 +264,24 @@ const agent9c2 = fakeAgent('hub-9c', 2)
 await ctx9.emit('tools/result', { name: 'pwsh', arguments: { command: 't2' }, agent: agent9c2 },
   { isError: true, content: [{ type: 'text', text: 'e' }] })
 assert(ctx9.__hubStats.turnFails('hub-9c') === 1, `跨 turn 重置后 fails=1 (got ${ctx9.__hubStats.turnFails('hub-9c')})`)
-// 同优先级按 ts 排序（190:45）
+// 同优先级按 ts 排序（190:45）——用桩 Date.now 保证确定性（替代真实 5ms 等待的竞态）
 const ctx9d = makeCtx()
 mod.apply(ctx9d, {})
-ctx9d.__reminder('hub-9d', { text: 'later', priority: 5 })
+const realNow9d = Date.now
+let fakeTs9d = 0
+Date.now = () => { fakeTs9d += 1000; return fakeTs9d }
+try {
+  ctx9d.__reminder('hub-9d', { text: 'first-queued', priority: 5 })
+  ctx9d.__reminder('hub-9d', { text: 'second-queued', priority: 5 })
+} finally {
+  Date.now = realNow9d
+}
 const agent9d = fakeAgent('hub-9d')
 const next9d = async () => ({ kind: 'enter', messages: [{ id: 'x', role: 'user', content: [], source: {} }] })
-await new Promise((resolve) => setTimeout(resolve, 5)) // ts 不同
-ctx9d.__reminder('hub-9d', { text: 'earlier-same-priority', priority: 5 })
 const r9d = await ctx9d.emit('agent/pre-step', { agent: agent9d, turn: 1, messages: [], signal: null }, next9d)
-const t9d = (r9d?.messages || []).map(m => m.content?.[0]?.text || '').join('|')
-assert(t9d.includes('earlier-same-priority'), `同优先级按 ts 排序注入`)
+const msgs9d = (r9d?.messages || []).map(m => m.content?.[0]?.text || '').filter(t => t.includes('queued'))
+assert(msgs9d.length === 2, `两条同优先级提醒都注入 (got ${msgs9d.length})`)
+assert(msgs9d[0].includes('first-queued') && msgs9d[1].includes('second-queued'), '同优先级按 ts 升序注入')
 
 console.log(`\n结果: ${passed} 通过, ${failed} 失败`)
 process.exit(failed > 0 ? 1 : 0)
