@@ -277,6 +277,82 @@ console.log('\n=== 测试 17: 模块元数据 ===')
 assert(mod.name === 'dsh-skill-loader', `name 导出 (got ${mod.name})`)
 assert(typeof mod.apply === 'function', 'apply 为函数')
 
+// =========================================================================
+// 2026-09-11 新增：词法误触发修正
+// 真实事故：用户粘贴一段**全部 PASS** 的核对脚本输出，因正文含"失败/exit code"
+// 即被点名 dsh-error-protocol / debug-by-root-cause（触发条件实际不成立）。
+// =========================================================================
+console.log('\n=== 测试 19: 围栏代码块内出现关键词 → 不点名 ===')
+const ctx19 = makeCtx()
+mod.apply(ctx19, {})
+const agent19 = fakeAgent('s-19')
+await ctx19.emit('agent/pre-step', { agent: agent19, turn: 1, signal: null, messages: [userMsg('你好')] })
+const pasted = [
+  '我跑完了，结果如下：',
+  '```',
+  '=== 结论 ===',
+  '✅ 两项均已生效',
+  '[E] 连续 2 次同参失败 → 预期不再触发「本轮失败」卡片',
+  'exit code: 0',
+  '```',
+  '你看对吗？',
+].join('\n')
+const r19 = await ctx19.emit('agent/pre-step', { agent: agent19, turn: 1, signal: null, messages: [userMsg(pasted)] })
+assert(injectedTexts(r19).length === 0, `围栏代码块内关键词不点名 (got ${injectedTexts(r19).length})`)
+
+console.log('\n=== 测试 20: 行内代码内出现关键词 → 不点名 ===')
+const ctx20 = makeCtx()
+mod.apply(ctx20, {})
+const agent20 = fakeAgent('s-20')
+await ctx20.emit('agent/pre-step', { agent: agent20, turn: 1, signal: null, messages: [userMsg('你好')] })
+const r20 = await ctx20.emit('agent/pre-step', { agent: agent20, turn: 1, signal: null, messages: [userMsg('他回了一句 `失败了` 就走了，没别的')] })
+assert(injectedTexts(r20).length === 0, `行内代码内关键词不点名 (got ${injectedTexts(r20).length})`)
+
+// 说明：下面用 '这个报错卡住了' 只命中 requiresFailure 的两个 skill
+// （error-triage 的关键词是 打包/依赖/镜像… 不含"报错"，故不会干扰判定）
+console.log('\n=== 测试 21: __errLog 存在但本 turn 无真实失败 → 失败类 skill 被压制 ===')
+const ctx21 = makeCtx()
+ctx21.__errLog = [{ tool: 'pwsh', fp: 'x', isFailure: false, turn: 0 }]
+mod.apply(ctx21, {})
+const agent21 = fakeAgent('s-21')
+await ctx21.emit('agent/pre-step', { agent: agent21, turn: 1, signal: null, messages: [userMsg('你好')] })
+const r21 = await ctx21.emit('agent/pre-step', { agent: agent21, turn: 1, signal: null, messages: [userMsg('这个报错卡住了')] })
+assert(injectedTexts(r21).length === 0, `无真实失败则不点名失败类 skill (got ${injectedTexts(r21).length})`)
+
+console.log('\n=== 测试 22: __errLog 有本 turn 真实失败 → 照常点名（不过度压制） ===')
+const ctx22 = makeCtx()
+ctx22.__errLog = [{ tool: 'pwsh', fp: 'x', isFailure: true, turn: 0 }]
+mod.apply(ctx22, {})
+const agent22 = fakeAgent('s-22')
+await ctx22.emit('agent/pre-step', { agent: agent22, turn: 1, signal: null, messages: [userMsg('你好')] })
+const r22 = await ctx22.emit('agent/pre-step', { agent: agent22, turn: 1, signal: null, messages: [userMsg('这个报错卡住了')] })
+const t22 = injectedTexts(r22).join('\n')
+assert(t22.includes('dsh-error-protocol'), '有真实失败 → 点名 error-protocol')
+assert(t22.includes('debug-by-root-cause'), '有真实失败 → 点名 debug-by-root-cause')
+
+console.log('\n=== 测试 23: 失败发生在别的 turn → 被压制（闸是 turn 级的） ===')
+const ctx23 = makeCtx()
+ctx23.__errLog = [{ tool: 'pwsh', fp: 'x', isFailure: true, turn: 99 }]
+mod.apply(ctx23, {})
+const agent23 = fakeAgent('s-23')
+await ctx23.emit('agent/pre-step', { agent: agent23, turn: 1, signal: null, messages: [userMsg('你好')] })
+const r23 = await ctx23.emit('agent/pre-step', { agent: agent23, turn: 1, signal: null, messages: [userMsg('这个报错卡住了')] })
+assert(injectedTexts(r23).length === 0, `他 turn 的失败不算 (got ${injectedTexts(r23).length})`)
+
+console.log('\n=== 测试 24: 限流按 turn 复位（maxInjectsPerTurn 名副其实） ===')
+const ctx24 = makeCtx()
+mod.apply(ctx24, {})
+const agent24 = { id: 's-24', session: { events: [{ type: 'turn/start', data: { turn: 1 } }] } }
+await ctx24.emit('agent/pre-step', { agent: agent24, turn: 1, signal: null, messages: [userMsg('你好')] })
+const r24a = await ctx24.emit('agent/pre-step', { agent: agent24, turn: 1, signal: null, messages: [userMsg('打包失败')] })
+const r24b = await ctx24.emit('agent/pre-step', { agent: agent24, turn: 1, signal: null, messages: [userMsg('还是失败')] })
+assert(injectedTexts(r24a).length === 1, `turn1 首次点名 (got ${injectedTexts(r24a).length})`)
+assert(injectedTexts(r24b).length === 0, `同 turn 内第二次被限流 (got ${injectedTexts(r24b).length})`)
+// 进入 turn 2 → 限流应归零（旧实现把计数当时间戳，靠 30min 超时兜，做不到这点）
+agent24.session.events.push({ type: 'turn/start', data: { turn: 2 } })
+const r24c = await ctx24.emit('agent/pre-step', { agent: agent24, turn: 2, signal: null, messages: [userMsg('又失败了')] })
+assert(injectedTexts(r24c).length === 1, `新 turn 限流归零后可再点名 (got ${injectedTexts(r24c).length})`)
+
 console.log(`\n结果: ${passed} 通过, ${failed} 失败`)
 for (const c of makeCtx()._cleanups) c()
 process.exit(failed > 0 ? 1 : 0)

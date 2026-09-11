@@ -12,7 +12,28 @@
 
 // ── 工具结果判定 ──────────────────────────────────────────────────────
 
-/** 判断一次工具结果是否算"失败"（isError / exitCode / 渲染文本失败标记） */
+/** 取工具结果的纯文本头部（用于失败标记判定；不做整段 JSON 裸子串匹配） */
+function failureHead(result, limit = 2000) {
+  try {
+    const c = result.content
+    if (Array.isArray(c)) {
+      const joined = c.map(b => (b && typeof b === 'object' && typeof b.text === 'string') ? b.text : '').join(' ')
+      if (joined) return joined.slice(0, limit).toLowerCase()
+    }
+  } catch { /* ignore */ }
+  return JSON.stringify(result || '').slice(0, limit).toLowerCase()
+}
+
+/** 判断一次工具结果是否算"失败"（isError / exitCode / 显式失败标记）
+ *
+ *  ⚠️ 兜底 3 必须收窄（2026-09-11 实测）：旧实现对整段 JSON 文本做
+ *  `error|exception|traceback|failed:` 裸子串匹配，导致**成功读取任何提到
+ *  "error" 的文件/日志**都被判成工具失败（59 个真实成功读取中 14 个误判，
+ *  23.7%，且全部落到 generic 类）——进而让 env-triage 误报"同一根因已换 4 种
+ *  方案"，自指式误报（读插件自己的源码就会触发）。
+ *  修正后只认：① `exit code: N`(N≠0，含 `[exit code: N]` 与 `command failed: exit code N`)
+ *  ② 文本**头部行首**的异常锚点（Error:/Exception:/Traceback/Fatal/Failed:）——
+ *  两者都是显式失败形态，而非"正文里恰好出现这个词"。 */
 export function isFailure(result) {
   if (!result) return false
   if (result.isError === true) return true
@@ -24,9 +45,12 @@ export function isFailure(result) {
       if (typeof code === 'number' && code !== 0) return true
     }
   } catch { /* ignore */ }
-  // 兜底 2: 渲染文本里的失败标记（[exit code: N]、error、failed 等）
-  const txt = JSON.stringify(result.content || result || '').toLowerCase()
-  return /(\[exit code: [1-9]|error|exception|traceback|command failed|failed:|exit code: [1-9])/.test(txt)
+  // 兜底 2: 显式失败标记（非裸关键词子串）
+  //   注：用无括号的 `exit code: N` 同时覆盖 `[exit code: N]` 与 `command failed: exit code N`，
+  //   且**不会**被"源码里写着这个正则"的文本自匹配（`exit code: [` 后接 `[` 不匹配 [1-9]）。
+  const head = failureHead(result)
+  if (/exit code: [1-9]\d*/.test(head)) return true
+  return /^\s*(?:error|exception|traceback|fatal|failed[:：])/m.test(head.slice(0, 400))
 }
 
 /** 提取工具结果纯文本（content 数组 → join；失败原因用）。

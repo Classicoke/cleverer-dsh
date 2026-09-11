@@ -348,18 +348,24 @@ await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: 'x2' }, age
 // content 干净文本 + isError false → 不算失败
 await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: 'x3' }, agent: agent13 },
   { isError: false, content: [{ type: 'text', text: 'all good' }] })
-// content 含 error 标记（isError false）→ 算失败（105 正则）
+// content 正文里恰好出现失败关键词（isError false、无退出码）→ **不算失败**
+// 2026-09-11 修正（本断言原为 "算失败"）：旧 isFailure 对整段结果文本裸子串匹配
+// 该关键词，导致"成功读取一个提到它的源文件/日志"被判成工具失败——实测 59 个真实
+// 成功读取中 14 个误判（23.7%，全落 generic 类），并使 env-triage 自指式误报
+// "同一根因已换 N 种方案"（读插件自己的源码就会触发）。样本见 errlog-falsepositive-probe.mjs。
 await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: 'x4' }, agent: agent13 },
-  { isError: false, content: [{ type: 'text', text: 'something error happened' }] })
-// content 含 [exit code: 1] 文本（105 正则第二分支）
+  { isError: false, content: [{ type: 'text', text: 'log line mentions error but the tool succeeded' }] })
+const d13a = await ctx.emit('tools/pre-execute',
+  { name: 'pwsh', arguments: { command: 'x4' }, agent: agent13 })
+assert(d13a.kind === 'allow', `正文提及失败关键词不再判失败 (got ${d13a.kind})`)
+// content 含 [exit code: 1] 文本（显式失败标记）→ 算失败；连两次 → 同命令重试 deny
 await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: 'x5' }, agent: agent13 },
   { isError: false, content: [{ type: 'text', text: '[exit code: 1] boom' }] })
-// x4 再失败一次（连续 2 次）→ 同命令重试应 deny
-await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: 'x4' }, agent: agent13 },
-  { isError: false, content: [{ type: 'text', text: 'something error happened' }] })
+await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: 'x5' }, agent: agent13 },
+  { isError: false, content: [{ type: 'text', text: '[exit code: 1] boom' }] })
 const d13 = await ctx.emit('tools/pre-execute',
-  { name: 'pwsh', arguments: { command: 'x4' }, agent: agent13 })
-assert(d13.kind === 'deny', `文本 error 标记被识别为失败并拒绝 (got ${d13.kind})`)
+  { name: 'pwsh', arguments: { command: 'x5' }, agent: agent13 })
+assert(d13.kind === 'deny', `显式 [exit code: 1] 标记被识别为失败并拒绝 (got ${d13.kind})`)
 assert(true, 'isFailure 边界路径全部执行')
 
 // =========================================================================
