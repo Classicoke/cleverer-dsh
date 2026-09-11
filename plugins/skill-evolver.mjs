@@ -86,6 +86,34 @@ function isToolCallString(s) {
   return TOOL_CALL_RE.test(String(s || '').trim())
 }
 
+/**
+ * C 层提炼辅助（2026-09-03）：把"操作日志快照"式的 solution 浓缩成"可复用规则句"。
+ * - 去命令前缀/路径/heredoc 残留 → 只留人类可读的"做了什么/为何有效"
+ * - 按句子边界截断 ≤160 字符，保证 promote 写 jsonl 前已是规则而非日志
+ */
+const CMD_PREFIX_RE = /^(?:pwsh|bash|node|bun|python|git|psql)\s*[:：]?\s*/i
+const CMD_INLINE_RE = /(?:Write-Output\s+["'`][^"'`]*["'`]|Get-Content\s+\S+|&?\s*[A-Za-z]:\\[^\s;|&]+|(?:^|\s)(?:cd|dir|ls|rm|copy|move)\s+\S+)/g
+const HEREDOC_RE = /@['"][\s\S]*?['"]/g
+const QUOTE_TAIL_RE = /\s*(?:\| Out-String|2>\$?null|2>&1|Select-Object\s+.*)$/
+function distillRule(s) {
+  let t = String(s || '')
+    .replace(HEREDOC_RE, ' ')
+    .replace(CMD_INLINE_RE, ' ')
+    .replace(QUOTE_TAIL_RE, '')
+    .replace(CMD_PREFIX_RE, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+  // 若清洗后过短（说明原本是纯命令）→ 保留原样但截断（不能丢信息）
+  if (t.length < 12 && String(s).length > t.length) t = String(s).slice(0, 200)
+  // 句子边界截断
+  if (t.length > 160) {
+    const cut = t.slice(0, 160)
+    const lastPeriod = Math.max(cut.lastIndexOf('。'), cut.lastIndexOf('. '), cut.lastIndexOf('；'), cut.lastIndexOf('; '))
+    t = (lastPeriod > 40 ? cut.slice(0, lastPeriod + 1) : cut) + '…'
+  }
+  return t
+}
+
 /** 4. 泛化质量总校验：不满足任一 → 跳过沉淀（记日志） */
 function passesQualityGate(lesson) {
   const title = String(lesson.title || '')
@@ -199,12 +227,12 @@ async function learn(skillsDir, lesson, cfg) {
   if (!gate.ok) {
     return { action: 'rejected', reason: gate.reason }
   }
-  // P0-2 门槛 2：清洗工具输出残留
+  // P0-2 门槛 2：清洗工具输出残留 + 规则化提炼（2026-09-03：solution 浓缩为可复用规则句）
   const cleanLesson = {
     ...lesson,
     title: cleanToolResidue(lesson.title),
     symptom: cleanToolResidue(lesson.symptom),
-    solution: cleanToolResidue(lesson.solution),
+    solution: distillRule(lesson.solution),
   }
   const lessonBody = `${cleanLesson.title}\n${cleanLesson.solution}\n${cleanLesson.symptom || ''}`
   const match = await findBestMatch(skillsDir, lessonBody, cleanLesson.title)
