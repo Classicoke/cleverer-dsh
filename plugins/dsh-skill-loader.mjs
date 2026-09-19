@@ -16,7 +16,7 @@
  *                              name: 'file:///.../dsh-skill-loader.mjs'
  */
 import { randomUUID } from 'node:crypto'
-import { makeCleanupTimer } from './_shared.mjs'
+import { makeCleanupTimer, currentTurn } from './_shared.mjs'
 
 export const name = 'dsh-skill-loader'
 
@@ -28,6 +28,9 @@ const DEFAULT_SKILLS = [
     name: 'dsh-error-protocol',
     trigger: '工具失败/报错时：六步协议（分类→诊断→决策→验证→沉淀）',
     keywords: ['失败', '报错', 'error', 'failed', 'exit code', '找不到', 'cannot', 'ENOENT', '卡住', '重试'],
+    // 2026-09-11：本 skill 的触发前提就是"工具失败/报错"——故必须由**真实失败证据**背书，
+    // 不能只因文本里出现"失败"二字就点名（用户粘贴的日志/报告里全是这些词）。
+    requiresFailure: true,
   },
   {
     name: 'dsh-error-triage',
@@ -38,6 +41,8 @@ const DEFAULT_SKILLS = [
     name: 'debug-by-root-cause',
     trigger: '工具调用连续失败 2 次以上，或需要定位失败根因',
     keywords: ['失败', '报错', 'error', 'failed', '卡住', '重试', '找不到', 'cannot', 'ENOENT'],
+    // 2026-09-11：同 error-protocol，须有真实失败证据（见 requiresFailure 语义说明）
+    requiresFailure: true,
   },
   {
     name: 'local-first',
@@ -64,10 +69,35 @@ export function apply(ctx, config = {}) {
 
   ctx.logger?.info?.(`dsh-skill-loader: loaded (${skills.length} skills registered)`)
 
-  // agentId -> 本 turn 已注入次数
+  // agentId -> { turn, count, at }：**按 turn** 计数的点名次数
+  // （2026-09-11 修正：原先存的是纯计数 count，却被清理逻辑当作时间戳比较
+  //  → `1 < Date.now()-30min` 恒真 → 每 10 分钟把限流清零，maxInjectsPerTurn 形同失效。
+  //  改为存 turn（跨 turn 归零，名副其实）+ at（仅供清理用时间戳）。）
   const injected = new Map()
   // agentId -> 会话级清单注入时间戳（每 agent 仅一次，防刷屏）
   const listShownAt = new Map()
+
+  /** 去掉代码块/行内代码后再做关键词匹配。
+   *  2026-09-11 修正：用户粘贴的终端输出/日志/报告里常含"失败/error/exit code"等词，
+   *  但那是在**描述**别处发生的事，不是本会话发生的失败——裸 includes 会把它当触发条件。
+   *  实测：贴一份全部 PASS 的核对脚本输出，因正文含"失败"二字即点名 dsh-error-protocol。 */
+  function stripCode(text) {
+    return String(text)
+      .replace(/```[\s\S]*?```/g, ' ')
+      .replace(/~~~[\s\S]*?~~~/g, ' ')
+      .replace(/`[^`\n]*`/g, ' ')
+  }
+
+  /** 本 turn 是否确有"工具失败"——数据源是 discipline-hub 的 ctx.__errLog。
+   *  返回 true=确有 / false=确无 / null=无法判定（hub 缺失或字段不全）。
+   *  语义：只有明确"确无"才压制 requiresFailure 类 skill；无法判定时退化为旧的
+   *  关键词行为，避免 hub 缺失时**静默丢掉**错误处理提醒（能力悄悄消失比误报更糟）。 */
+  function realFailureThisTurn(agent) {
+    const log = ctx.__errLog
+    if (!Array.isArray(log)) return null
+    const turn = currentTurn(agent)
+    return log.some(r => r && r.isFailure === true && r.turn === turn)
+  }
 
   /** 用户消息文本 → 命中的 skill 列表 */
   function matchSkills(text) {
@@ -116,13 +146,17 @@ export function apply(ctx, config = {}) {
       (m?.content || []).map(b => b?.type === 'text' ? b.text : '').join('')
     ).join('\n')
 
-    const hits = matchSkills(userText)
+    let hits = matchSkills(stripCode(userText))
+    // 失败类 skill 加闸：本 turn 确无失败 → 不视为"错误处理场景"（不消耗限流）
+    if (realFailureThisTurn(agent) === false) hits = hits.filter(s => !s.requiresFailure)
     if (hits.length === 0) return decision
 
-    // 每 turn 限流
-    const count = injected.get(agent.id) ?? 0
+    // 每 turn 限流（跨 turn 自动归零）
+    const turn = currentTurn(agent)
+    const rec = injected.get(agent.id)
+    const count = (rec && rec.turn === turn) ? rec.count : 0
     if (count >= maxInjectsPerTurn) return decision
-    injected.set(agent.id, count + 1)
+    injected.set(agent.id, { turn, count: count + 1, at: Date.now() })
 
     const named = hits.map(s => `\`${s.name}\``).join(' / ')
     const text = `<system-reminder>当前任务匹配纪律 skill：${named}。先用 skill 工具加载对应 skill 并按其中步骤执行（不要跳过加载直接凭印象做）。</system-reminder>`
@@ -137,8 +171,8 @@ export function apply(ctx, config = {}) {
 
   // ── 清理 ─────────────────────────────────────────────────────────────
   ctx.effect(() => makeCleanupTimer((cutoff) => {
-    for (const [agentId, at] of injected) {
-      if (at < cutoff) injected.delete(agentId)
+    for (const [agentId, rec] of injected) {
+      if (rec.at < cutoff) injected.delete(agentId)
     }
     for (const [agentId, at] of listShownAt) {
       if (at < cutoff) listShownAt.delete(agentId)
