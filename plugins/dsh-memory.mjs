@@ -370,7 +370,7 @@ export function apply(ctx, config = {}) {
       id: randomUUID(),
       role: 'user',
       content: [{ type: 'text', text: snapshot }],
-      source: { kind: 'plugin', plugin: 'dsh-memory' },
+      source: { kind: 'dsh-memory', plugin: 'dsh-memory' },
     }
     return { kind: 'enter', messages: [...decision.messages, msg] }
   })
@@ -400,7 +400,7 @@ export function apply(ctx, config = {}) {
         id: randomUUID(),
         role: 'user',
         content: [{ type: 'text', text }],
-        source: { kind: 'plugin', plugin: 'dsh-memory' },
+        source: { kind: 'dsh-memory', plugin: 'dsh-memory' },
       }
       return { kind: 'enter', messages: [...decision.messages, msg] }
     })
