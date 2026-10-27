@@ -24,9 +24,11 @@ export function isFailure(result) {
       if (typeof code === 'number' && code !== 0) return true
     }
   } catch { /* ignore */ }
-  // 兜底 2: 渲染文本里的失败标记（[exit code: N]、error、failed 等）
-  const txt = JSON.stringify(result.content || result || '').toLowerCase()
-  return /(\[exit code: [1-9]|error|exception|traceback|command failed|failed:|exit code: [1-9])/.test(txt)
+  // 兜底 2: 只认 harness 自己的退出标记，且只扫开头。
+  // 不匹配裸的 error / exception / failed / traceback —— 否则
+  // 成功 read/grep 回来的正文里出现这些词会被误判成失败。
+  const txt = extractText(result, 512).toLowerCase()
+  return /(?:\[exit code: [1-9]|(?:^|[^\w])exit code: [1-9])/.test(txt)
 }
 
 /** 提取工具结果纯文本（content 数组 → join；失败原因用）。
@@ -75,7 +77,13 @@ export function fingerprint(exec, { limit = 300 } = {}) {
         const oldStr = String(args.old_string || '').slice(0, 80)
         sig = `${fp}::${oldStr}`
       } else {
-        sig = fp
+        // 非 edit 的 file_path/path 工具（read/grep/…）：语义参数（offset/limit/pattern 等）
+        // 进入指纹 —— 它们改变返回内容，所以属于调用身份的一部分。
+        // 纯元数据（description/justification/sandbox_permissions）不进入指纹。
+        const META = new Set(['description', 'justification', 'sandbox_permissions'])
+        const rest = Object.entries(args)
+          .filter(([k, v]) => !META.has(k) && v !== undefined && v !== null)
+        sig = rest.length ? `${fp}::${JSON.stringify(Object.fromEntries(rest))}` : fp
       }
     } else {
       sig = JSON.stringify(args).slice(0, limit)

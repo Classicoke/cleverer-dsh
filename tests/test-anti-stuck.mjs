@@ -348,18 +348,22 @@ await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: 'x2' }, age
 // content 干净文本 + isError false → 不算失败
 await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: 'x3' }, agent: agent13 },
   { isError: false, content: [{ type: 'text', text: 'all good' }] })
-// content 含 error 标记（isError false）→ 算失败（105 正则）
+// content 含裸 "error"（isError false）→ 不再算失败（成功 → 指纹清除）
 await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: 'x4' }, agent: agent13 },
   { isError: false, content: [{ type: 'text', text: 'something error happened' }] })
-// content 含 [exit code: 1] 文本（105 正则第二分支）
+// content 含 [exit code: 1] 文本（isError false）→ 仍算失败
 await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: 'x5' }, agent: agent13 },
   { isError: false, content: [{ type: 'text', text: '[exit code: 1] boom' }] })
-// x4 再失败一次（连续 2 次）→ 同命令重试应 deny
-await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: 'x4' }, agent: agent13 },
-  { isError: false, content: [{ type: 'text', text: 'something error happened' }] })
+// x5 再失败一次（连续 2 次）→ 同命令重试应 deny
+await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: 'x5' }, agent: agent13 },
+  { isError: false, content: [{ type: 'text', text: '[exit code: 1] boom' }] })
 const d13 = await ctx.emit('tools/pre-execute',
+  { name: 'pwsh', arguments: { command: 'x5' }, agent: agent13 })
+assert(d13.kind === 'deny', `[exit code: 1] 标记被识别为失败并拒绝 (got ${d13.kind})`)
+// x4（裸 error）从未失败 → 不 deny
+const d13b = await ctx.emit('tools/pre-execute',
   { name: 'pwsh', arguments: { command: 'x4' }, agent: agent13 })
-assert(d13.kind === 'deny', `文本 error 标记被识别为失败并拒绝 (got ${d13.kind})`)
+assert(d13b.kind === 'allow', `裸 "error" 不再触发 deny (got ${d13b.kind})`)
 assert(true, 'isFailure 边界路径全部执行')
 
 // =========================================================================
@@ -581,6 +585,41 @@ const evilResult = { isError: false, value: evilValue }
 await ctx.emit('tools/result', { name: 'pwsh', arguments: { command: 'evilvalue' }, agent: agent20f }, evilResult)
 assert(true, 'isFailure catch 路径执行')
 assert(true, '分支穷举场景全部执行')
+
+// =========================================================================
+console.log('\n=== 测试 21: 回归 — isFailure 不再误判正文 / fingerprint 计入 offset ===')
+const shared = await import(pathToFileURL('plugins/_shared.mjs').href)
+
+// 1. ~40KB 正文含 error/exception/failed/traceback → isFailure false
+const bigSource = 'const x = 1\n'.repeat(3000)
+  + '// error: "consent"\n// exception raised\n// failed to read\n// traceback here\n'
+  + 'const y = 2\n'.repeat(2000)
+assert(shared.isFailure({ isError: false, content: [{ type: 'text', text: bigSource }] }) === false,
+  '40KB 正文含 error/exception/failed/traceback → false')
+
+// 2. реальные сбои не теряются
+assert(shared.isFailure({ isError: false, value: { exitCode: 1 }, content: [{ type: 'text', text: '[exit code: 1] boom' }] }) === true,
+  'value.exitCode=1 → true')
+assert(shared.isFailure({ isError: false, content: [{ type: 'text', text: '[exit code: 1] boom' }] }) === true,
+  '[exit code: 1] 文本 → true')
+assert(shared.isFailure({ isError: false, content: [{ type: 'text', text: 'just some error words' }] }) === false,
+  '裸 error 正文 → false')
+
+// 3. fingerprint(read) 计入 offset
+const fpR0 = shared.fingerprint({ name: 'read', arguments: { file_path: 'X', offset: 0 } })
+const fpR100 = shared.fingerprint({ name: 'read', arguments: { file_path: 'X', offset: 100 } })
+assert(fpR0 !== fpR100, `fingerprint(read offset 0/100) различается`)
+
+// 4. read(offset=0) 连续失败两次，read(offset=100) 不 deny（不同指纹）
+ctx = makeCtx()
+mod.apply(ctx, {})
+const agentR = fakeAgent('agent-regress')
+await ctx.emit('tools/result', { name: 'read', arguments: { file_path: 'a.mjs', offset: 0 }, agent: agentR },
+  { isError: true, content: [{ type: 'text', text: 'real fail' }] })
+await ctx.emit('tools/result', { name: 'read', arguments: { file_path: 'a.mjs', offset: 0 }, agent: agentR },
+  { isError: true, content: [{ type: 'text', text: 'real fail' }] })
+const dR = await ctx.emit('tools/pre-execute', { name: 'read', arguments: { file_path: 'a.mjs', offset: 100 }, agent: agentR })
+assert(dR?.kind !== 'deny', `read(offset=100) не deny при провале offset=0 (got ${dR?.kind})`)
 
 // =========================================================================
 console.log(`\n结果: ${passed} 通过, ${failed} 失败`)
